@@ -6,8 +6,11 @@
   "scripts": {
     "build": "pnpm -r build",
     "test": "vitest run",
-    "dev:ui": "pnpm --filter @schema-memory/server dev",
-    "dev:web": "pnpm --filter @schema-memory/web dev"
+    "dev": "node scripts/dev.mjs",
+    "dev:server": "node packages/server/dist/index.js",
+    "dev:web": "pnpm --filter @schema-memory/web dev",
+    "ui": "node packages/cli/dist/index.js ui --open",
+    "start": "node packages/cli/dist/index.js ui --open"
   },
   "devDependencies": {
     "@types/node": "^22.13.4",

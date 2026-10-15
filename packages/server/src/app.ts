@@ -20,7 +20,30 @@ import {
   AdrStatus,
   Dialect,
 } from '@schema-memory/core';
-import { resolve } from 'node:path';
+import { resolve, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { existsSync } from 'node:fs';
+import { serveStatic } from '@hono/node-server/serve-static';
+
+function findWebDistDir(): string | null {
+  try {
+    const currentDir = dirname(fileURLToPath(import.meta.url));
+    const candidates = [
+      resolve(currentDir, '../../../apps/web/dist'),
+      resolve(currentDir, '../../apps/web/dist'),
+      resolve(currentDir, '../apps/web/dist'),
+      resolve(process.cwd(), 'apps/web/dist'),
+    ];
+    for (const c of candidates) {
+      if (existsSync(resolve(c, 'index.html'))) {
+        return c;
+      }
+    }
+  } catch {
+    // ignore
+  }
+  return null;
+}
 
 export function createApp(): Hono {
   const app = new Hono();
@@ -292,6 +315,13 @@ export function createApp(): Hono {
       return c.json({ error: err.message }, 400);
     }
   });
+
+  // 11. Static files & SPA fallback for web UI
+  const webDist = findWebDistDir();
+  if (webDist) {
+    app.use('/assets/*', serveStatic({ root: webDist }));
+    app.get('*', serveStatic({ path: resolve(webDist, 'index.html') }));
+  }
 
   return app;
 }
