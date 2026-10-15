@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.schema-memory/pending/
+.schema-memory/*.tmp
+*.log
+.DS_Store
+coverage/
+.corepack/
+.pnpm-store/

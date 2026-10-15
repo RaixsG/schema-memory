@@ -1,0 +1,32 @@
+{
+  "name": "@schema-memory/cli",
+  "version": "0.1.0",
+  "type": "module",
+  "bin": {
+    "schema-memory": "./dist/index.js",
+    "sm": "./dist/index.js"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsup",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@schema-memory/core": "workspace:*",
+    "@schema-memory/mcp": "workspace:*",
+    "@schema-memory/server": "workspace:*",
+    "commander": "^13.1.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.3",
+    "tsup": "^8.3.6",
+    "vitest": "^3.0.5"
+  }
+}

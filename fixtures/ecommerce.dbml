@@ -1,0 +1,42 @@
+// E-commerce sample schema
+Table users {
+  id integer [pk, increment]
+  email varchar [unique, not null]
+  full_name varchar
+  created_at timestamp [default: `now()`]
+  Note: 'User accounts table'
+}
+
+Table orders {
+  id integer [pk, increment]
+  user_id integer [not null]
+  status order_status [not null, default: 'pending']
+  total decimal(10,2) [not null, default: 0.0]
+  created_at timestamp [default: `now()`]
+}
+
+Table order_items {
+  id integer [pk, increment]
+  order_id integer [not null]
+  product_id integer [not null]
+  quantity integer [not null, default: 1]
+  price decimal(10,2) [not null]
+}
+
+Table products {
+  id integer [pk, increment]
+  name varchar [not null]
+  price decimal(10,2) [not null]
+  stock integer [not null, default: 0]
+}
+
+Enum order_status {
+  pending
+  paid
+  shipped
+  cancelled
+}
+
+Ref: orders.user_id > users.id [delete: cascade]
+Ref: order_items.order_id > orders.id [delete: cascade]
+Ref: order_items.product_id > products.id
