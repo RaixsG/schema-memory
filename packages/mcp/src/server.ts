@@ -1,0 +1,608 @@
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { z } from 'zod';
+import {
+  listProjects,
+  resolveProject,
+  readConfig,
+  readIfExists,
+  parseSchema,
+  savePending,
+  getPending,
+  saveAdrDraft,
+  clearPending,
+  confirmChange,
+  listAdrs,
+  readAdr,
+  promoteAdr,
+  checkDrift,
+  writeAdr,
+  atomicWrite,
+  validateDbml,
+  nextAdrId,
+  renderAdrMarkdown,
+  AdrDraft,
+  AdrMetadata,
+  AdrStatus,
+} from '@schema-memory/core';
+import { resolve } from 'node:path';
+
+export const SERVER_INSTRUCTIONS = `
+Instructions for AI Agent using schema-memory:
+1. Always call get_decisions and get_schema before proposing or making changes to understand existing architecture and the "why" behind it.
+2. When a pending change exists or when proposing a change, engage in a debate with the user about the reasons and trade-offs. Ask targeted questions, one at a time, to uncover context, alternatives, and consequences before calling draft_adr.
+3. NEVER call confirm_change without the user's explicit approval in the conversation.
+4. After confirm_change succeeds, save the returned engramSummary into Engram using your Engram tool. ONLY after that, proceed to modify application code, ORM models, or migration files in the project.
+5. Never edit .schema-memory files directly.
+`.trim();
+
+function jsonResponse(data: unknown) {
+  return {
+    content: [{ type: 'text' as const, text: JSON.stringify(data, null, 2) }],
+  };
+}
+
+function errorResponse(message: string, code = 'ERROR') {
+  return {
+    isError: true,
+    content: [
+      {
+        type: 'text' as const,
+        text: JSON.stringify({ code, message }, null, 2),
+      },
+    ],
+  };
+}
+
+export function createMcpServer(): McpServer {
+  const server = new McpServer(
+    {
+      name: 'schema-memory-mcp',
+      version: '0.1.0',
+    },
+    {
+      instructions: SERVER_INSTRUCTIONS,
+    }
+  );
+
+  // 1. list_projects
+  server.registerTool(
+    'list_projects',
+    {
+      description:
+        'List all registered projects managed by schema-memory, including status and pending flags.',
+      inputSchema: {},
+    },
+    async () => {
+      try {
+        const projects = await listProjects();
+        const details = await Promise.all(
+          projects.map(async (p) => {
+            const config = await readConfig(p.path);
+            const pending = await getPending(p.path);
+            const adrs = await listAdrs(p.path);
+            const unconfirmedAdrs = adrs.filter(
+              (a) => a.metadata.status !== 'confirmado'
+            ).length;
+            return {
+              id: p.id,
+              name: p.name,
+              path: p.path,
+              dialect: config?.dialect || 'postgres',
+              stack: config?.stack || [],
+              hasPending: pending !== null,
+              pendingStale: pending?.stale || false,
+              unconfirmedAdrs,
+              totalAdrs: adrs.length,
+            };
+          })
+        );
+        return jsonResponse(details);
+      } catch (err: any) {
+        return errorResponse(err.message);
+      }
+    }
+  );
+
+  // 2. get_schema
+  server.registerTool(
+    'get_schema',
+    {
+      description:
+        'Get the canonical DBML schema and/or structured model of the project.',
+      inputSchema: {
+        project: z
+          .string()
+          .optional()
+          .describe('Project ID or directory path (defaults to auto-detection)'),
+        format: z
+          .enum(['dbml', 'summary', 'both'])
+          .optional()
+          .default('both')
+          .describe('Output format'),
+      },
+    },
+    async (args) => {
+      try {
+        const resolved = await resolveProject({ project: args.project });
+        const schemaPath = resolve(resolved.path, '.schema-memory', 'schema.dbml');
+        const dbml = (await readIfExists(schemaPath)) || '';
+        const model = parseSchema(dbml);
+
+        const summary = {
+          tablesCount: model.tables.length,
+          tables: model.tables.map((t) => ({
+            name: t.name,
+            columns: t.columns.map((c) => ({
+              name: c.name,
+              type: c.type,
+              pk: c.pk || undefined,
+              unique: c.unique || undefined,
+              notNull: c.notNull || undefined,
+            })),
+            note: t.note || undefined,
+          })),
+          enums: model.enums.map((e) => ({
+            name: e.name,
+            values: e.values.map((v) => v.name),
+          })),
+          refsCount: model.refs.length,
+        };
+
+        if (args.format === 'dbml') {
+          return jsonResponse({ project: resolved.id, dbml });
+        }
+        if (args.format === 'summary') {
+          return jsonResponse({ project: resolved.id, summary });
+        }
+        return jsonResponse({ project: resolved.id, dbml, summary });
+      } catch (err: any) {
+        return errorResponse(err.message);
+      }
+    }
+  );
+
+  // 3. get_pending_changes
+  server.registerTool(
+    'get_pending_changes',
+    {
+      description:
+        'Get currently pending schema changes (from UI editor or agent) waiting to be debated and confirmed.',
+      inputSchema: {
+        project: z.string().optional().describe('Project ID or directory path'),
+      },
+    },
+    async (args) => {
+      try {
+        const resolved = await resolveProject({ project: args.project });
+        const pending = await getPending(resolved.path);
+        if (!pending) {
+          return jsonResponse({
+            project: resolved.id,
+            hasPending: false,
+            message: 'No pending schema changes.',
+          });
+        }
+        return jsonResponse({
+          project: resolved.id,
+          hasPending: true,
+          source: pending.change.source,
+          stale: pending.stale,
+          changes: pending.changes,
+          affects: pending.affects,
+          draft: pending.draft,
+          proposedDbml: pending.change.proposedDbml,
+        });
+      } catch (err: any) {
+        return errorResponse(err.message);
+      }
+    }
+  );
+
+  // 4. propose_change
+  server.registerTool(
+    'propose_change',
+    {
+      description:
+        'Propose a new schema as a pending change for review and debate before confirmation.',
+      inputSchema: {
+        project: z.string().optional().describe('Project ID or directory path'),
+        dbml: z.string().describe('Proposed DBML schema content'),
+        note: z.string().optional().describe('Optional context note for proposal'),
+      },
+    },
+    async (args) => {
+      try {
+        const resolved = await resolveProject({ project: args.project });
+        const details = await savePending(resolved.path, {
+          proposedDbml: args.dbml,
+          source: 'agent',
+          note: args.note,
+        });
+        return jsonResponse({
+          project: resolved.id,
+          proposed: true,
+          stale: details.stale,
+          changesCount: details.changes.length,
+          changes: details.changes,
+          affects: details.affects,
+        });
+      } catch (err: any) {
+        return errorResponse(err.message);
+      }
+    }
+  );
+
+  // 5. draft_adr
+  server.registerTool(
+    'draft_adr',
+    {
+      description:
+        'Create or update an ADR draft attached to the pending schema change.',
+      inputSchema: {
+        project: z.string().optional().describe('Project ID or directory path'),
+        title: z.string().describe('Concise title of the decision'),
+        context: z
+          .string()
+          .describe('Context and problem statement that led to this change'),
+        decision: z
+          .string()
+          .describe('What was decided and how it is implemented'),
+        alternatives: z
+          .array(
+            z.object({
+              option: z.string().describe('Alternative option considered'),
+              whyDiscarded: z.string().describe('Reason why it was discarded'),
+            })
+          )
+          .min(1)
+          .describe('Alternatives discarded and why'),
+        consequences: z
+          .string()
+          .describe('Positive and negative consequences or trade-offs'),
+      },
+    },
+    async (args) => {
+      try {
+        const resolved = await resolveProject({ project: args.project });
+        const pending = await getPending(resolved.path);
+        if (!pending) {
+          return errorResponse(
+            'Cannot draft ADR: no pending schema change exists. Call propose_change first or edit schema in UI.'
+          );
+        }
+
+        const draft: AdrDraft = {
+          title: args.title,
+          context: args.context,
+          decision: args.decision,
+          alternatives: args.alternatives,
+          consequences: args.consequences,
+        };
+
+        await saveAdrDraft(resolved.path, draft);
+        return jsonResponse({
+          project: resolved.id,
+          draftSaved: true,
+          draft,
+        });
+      } catch (err: any) {
+        return errorResponse(err.message);
+      }
+    }
+  );
+
+  // 6. confirm_change
+  server.registerTool(
+    'confirm_change',
+    {
+      description:
+        'Confirm the pending change and ADR. Writes to disk and produces engramSummary. REQUIRES userConfirmed=true.',
+      inputSchema: {
+        project: z.string().optional().describe('Project ID or directory path'),
+        userConfirmed: z
+          .boolean()
+          .describe('Must be explicitly true, confirming user approval in conversation'),
+      },
+    },
+    async (args) => {
+      if (!args.userConfirmed) {
+        return errorResponse(
+          'Confirmation blocked: userConfirmed must be true. You must ask the user for explicit confirmation before confirming changes.'
+        );
+      }
+
+      try {
+        const resolved = await resolveProject({ project: args.project });
+        const result = await confirmChange(resolved.path);
+        return jsonResponse({
+          project: resolved.id,
+          confirmed: true,
+          adrId: result.adrId,
+          adrPath: result.adrPath,
+          changes: result.changes,
+          affects: result.affects,
+          engramSummary: result.engramSummary,
+          instructions:
+            'Now save engramSummary into Engram using your Engram tool. Then proceed to update codebase / ORM / migrations.',
+        });
+      } catch (err: any) {
+        return errorResponse(err.message);
+      }
+    }
+  );
+
+  // 7. discard_change
+  server.registerTool(
+    'discard_change',
+    {
+      description: 'Discard any current pending schema change and ADR draft.',
+      inputSchema: {
+        project: z.string().optional().describe('Project ID or directory path'),
+      },
+    },
+    async (args) => {
+      try {
+        const resolved = await resolveProject({ project: args.project });
+        await clearPending(resolved.path);
+        return jsonResponse({
+          project: resolved.id,
+          discarded: true,
+        });
+      } catch (err: any) {
+        return errorResponse(err.message);
+      }
+    }
+  );
+
+  // 8. get_decisions
+  server.registerTool(
+    'get_decisions',
+    {
+      description:
+        'Query past Architecture Decision Records (ADRs) with optional filters by table, column, or status.',
+      inputSchema: {
+        project: z.string().optional().describe('Project ID or directory path'),
+        table: z.string().optional().describe('Filter by affected table name'),
+        column: z.string().optional().describe('Filter by affected column name'),
+        status: z
+          .enum(['propuesto', 'confirmado', 'reconstruido'])
+          .optional()
+          .describe('Filter by ADR status'),
+        limit: z.number().optional().default(20),
+      },
+    },
+    async (args) => {
+      try {
+        const resolved = await resolveProject({ project: args.project });
+        const adrs = await listAdrs(resolved.path, {
+          table: args.table,
+          column: args.column,
+          status: args.status as AdrStatus | undefined,
+        });
+
+        const limited = adrs.slice(0, args.limit).map((a) => ({
+          id: a.metadata.id,
+          title: a.metadata.title,
+          status: a.metadata.status,
+          date: a.metadata.date,
+          affects: a.metadata.affects,
+          decision: a.decision,
+        }));
+
+        return jsonResponse({
+          project: resolved.id,
+          total: adrs.length,
+          adrs: limited,
+        });
+      } catch (err: any) {
+        return errorResponse(err.message);
+      }
+    }
+  );
+
+  // 9. get_adr
+  server.registerTool(
+    'get_adr',
+    {
+      description: 'Get the full details and markdown content of an ADR by ID.',
+      inputSchema: {
+        project: z.string().optional().describe('Project ID or directory path'),
+        id: z.string().describe('ADR ID (e.g. "0001")'),
+      },
+    },
+    async (args) => {
+      try {
+        const resolved = await resolveProject({ project: args.project });
+        const adr = await readAdr(resolved.path, args.id);
+        if (!adr) {
+          return errorResponse(`ADR "${args.id}" not found.`);
+        }
+        return jsonResponse({
+          project: resolved.id,
+          metadata: adr.metadata,
+          context: adr.context,
+          decision: adr.decision,
+          alternatives: adr.alternatives,
+          consequences: adr.consequences,
+          diffText: adr.diffText,
+          rawMarkdown: adr.content,
+        });
+      } catch (err: any) {
+        return errorResponse(err.message);
+      }
+    }
+  );
+
+  // 10. confirm_adr
+  server.registerTool(
+    'confirm_adr',
+    {
+      description:
+        'Promote an existing "reconstruido" ADR to "confirmado" status after human review.',
+      inputSchema: {
+        project: z.string().optional().describe('Project ID or directory path'),
+        id: z.string().describe('ADR ID to promote'),
+        title: z.string().optional(),
+        context: z.string().optional(),
+        decision: z.string().optional(),
+        consequences: z.string().optional(),
+        userConfirmed: z
+          .boolean()
+          .describe('Must be explicitly true, confirming user approval in conversation'),
+      },
+    },
+    async (args) => {
+      if (!args.userConfirmed) {
+        return errorResponse(
+          'Confirmation blocked: userConfirmed must be true.'
+        );
+      }
+
+      try {
+        const resolved = await resolveProject({ project: args.project });
+        const promoted = await promoteAdr(resolved.path, args.id, {
+          title: args.title,
+          context: args.context,
+          decision: args.decision,
+          consequences: args.consequences,
+        });
+
+        return jsonResponse({
+          project: resolved.id,
+          promoted: true,
+          id: promoted.metadata.id,
+          status: promoted.metadata.status,
+        });
+      } catch (err: any) {
+        return errorResponse(err.message);
+      }
+    }
+  );
+
+  // 11. import_schema
+  server.registerTool(
+    'import_schema',
+    {
+      description:
+        'Bootstrap schema-memory with an existing schema from code/migrations and optional reconstructed ADRs.',
+      inputSchema: {
+        project: z.string().optional().describe('Project ID or directory path'),
+        dbml: z.string().describe('Initial canonical DBML schema to import'),
+        adrs: z
+          .array(
+            z.object({
+              title: z.string(),
+              context: z.string(),
+              decision: z.string(),
+              alternatives: z.array(
+                z.object({ option: z.string(), whyDiscarded: z.string() })
+              ),
+              consequences: z.string(),
+              affects: z.array(z.string()).optional(),
+            })
+          )
+          .optional()
+          .describe('Optional initial reconstructed ADRs'),
+        overwrite: z
+          .boolean()
+          .optional()
+          .default(false)
+          .describe('Whether to overwrite existing schema if not empty'),
+      },
+    },
+    async (args) => {
+      try {
+        const resolved = await resolveProject({ project: args.project });
+        const schemaPath = resolve(resolved.path, '.schema-memory', 'schema.dbml');
+        const current = (await readIfExists(schemaPath)) || '';
+
+        if (current.trim() && !args.overwrite) {
+          const parsed = parseSchema(current);
+          if (parsed.tables.length > 0) {
+            return errorResponse(
+              'Project already has an existing schema with tables. Pass overwrite: true to force import.'
+            );
+          }
+        }
+
+        const valid = validateDbml(args.dbml);
+        if (!valid.ok) {
+          const err = valid.errors[0];
+          return errorResponse(
+            `Invalid DBML: ${err?.message} (line ${err?.line})`
+          );
+        }
+
+        await atomicWrite(schemaPath, args.dbml);
+
+        const createdAdrs: string[] = [];
+        if (args.adrs && args.adrs.length > 0) {
+          for (const item of args.adrs) {
+            const nextId = await nextAdrId(resolved.path);
+            const metadata: AdrMetadata = {
+              id: nextId,
+              title: item.title,
+              status: 'reconstruido',
+              date: new Date().toISOString().slice(0, 10),
+              affects: item.affects || [],
+            };
+            const draft: AdrDraft = {
+              title: item.title,
+              context: item.context,
+              decision: item.decision,
+              alternatives: item.alternatives,
+              consequences: item.consequences,
+            };
+            const md = renderAdrMarkdown({
+              metadata,
+              draft,
+            });
+            await writeAdr(resolved.path, metadata, md);
+            createdAdrs.push(nextId);
+          }
+        }
+
+        return jsonResponse({
+          project: resolved.id,
+          imported: true,
+          reconstructedAdrs: createdAdrs,
+        });
+      } catch (err: any) {
+        return errorResponse(err.message);
+      }
+    }
+  );
+
+  // 12. check_drift
+  server.registerTool(
+    'check_drift',
+    {
+      description:
+        'Compare a candidate DBML derived from project code/migrations against schema.dbml to detect drift.',
+      inputSchema: {
+        project: z.string().optional().describe('Project ID or directory path'),
+        candidateDbml: z
+          .string()
+          .describe('Candidate DBML schema extracted from code/ORM/migrations'),
+      },
+    },
+    async (args) => {
+      try {
+        const resolved = await resolveProject({ project: args.project });
+        const report = await checkDrift(resolved.path, args.candidateDbml);
+        return jsonResponse({
+          project: resolved.id,
+          inSync: report.inSync,
+          changesCount: report.changes.length,
+          changes: report.changes,
+          affected: report.affected,
+          suggestion: report.suggestion,
+        });
+      } catch (err: any) {
+        return errorResponse(err.message);
+      }
+    }
+  );
+
+  return server;
+}
