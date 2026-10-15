@@ -4,3 +4,7 @@ export * from './hash.js';
 export * from './dbml.js';
 export * from './serialize.js';
 export * from './diff.js';
+export * from './config.js';
+export * from './registry.js';
+export * from './stack.js';
+export * from './scaffold.js';
