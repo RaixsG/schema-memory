@@ -1,5 +1,11 @@
 import process from 'node:process';
 import { Command } from 'commander';
+import { startStdioServer } from '@schema-memory/mcp';
+import { uiCommand } from './commands/ui.js';
+import { addCommand } from './commands/add.js';
+import { removeCommand } from './commands/remove.js';
+import { statusCommand } from './commands/status.js';
+import { setupCommand } from './commands/setup.js';
 
 const program = new Command();
 
@@ -8,5 +14,87 @@ program
   .alias('sm')
   .description('Live database schema memory & ADR workflow for AI pair programming')
   .version('0.1.0');
+
+program
+  .command('ui')
+  .description('Start the local web UI and API server')
+  .option('-p, --port <port>', 'Server port (default: 4317)')
+  .option('--open', 'Open web browser automatically')
+  .action(async (opts) => {
+    try {
+      await uiCommand(opts);
+    } catch (err: any) {
+      console.error('Error starting UI:', err.message);
+      process.exit(1);
+    }
+  });
+
+program
+  .command('add <path>')
+  .description('Add and scaffold a project to schema-memory')
+  .option('-n, --name <name>', 'Custom project name')
+  .option('-d, --dialect <dialect>', 'Database dialect (postgres, mysql, sqlite, etc.)')
+  .option('-y, --yes', 'Skip confirmation prompt')
+  .option('--project-skill', 'Install custom project skill in .agents/')
+  .action(async (targetPath, opts) => {
+    try {
+      await addCommand(targetPath, opts);
+    } catch (err: any) {
+      console.error('Error adding project:', err.message);
+      process.exit(1);
+    }
+  });
+
+program
+  .command('remove <id>')
+  .description('Unregister a project from schema-memory')
+  .option('--delete-data', 'Also delete the .schema-memory data directory')
+  .option('-y, --yes', 'Skip confirmation prompt')
+  .action(async (id, opts) => {
+    try {
+      await removeCommand(id, opts);
+    } catch (err: any) {
+      console.error('Error removing project:', err.message);
+      process.exit(1);
+    }
+  });
+
+program
+  .command('status')
+  .description('Show status of registered projects, pending changes and ADRs')
+  .option('-p, --project <project>', 'Filter by project ID or path')
+  .action(async (opts) => {
+    try {
+      await statusCommand(opts);
+    } catch (err: any) {
+      console.error('Error checking status:', err.message);
+      process.exit(1);
+    }
+  });
+
+program
+  .command('mcp')
+  .description('Start the MCP server over stdio for agent integration')
+  .action(async () => {
+    try {
+      await startStdioServer();
+    } catch (err: any) {
+      console.error('Fatal MCP server error:', err.message);
+      process.exit(1);
+    }
+  });
+
+program
+  .command('setup')
+  .description('Install or print the Antigravity plugin configuration')
+  .option('--print', 'Print plugin configuration without installing')
+  .action(async (opts) => {
+    try {
+      await setupCommand(opts);
+    } catch (err: any) {
+      console.error('Error during setup:', err.message);
+      process.exit(1);
+    }
+  });
 
 program.parse(process.argv);
