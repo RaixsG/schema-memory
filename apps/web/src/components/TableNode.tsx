@@ -44,7 +44,10 @@ export function TableNode({ data }: { data: TableNodeData }) {
           </span>
         </div>
         {data.note && (
-          <span title={data.note} style={{ color: 'var(--text-muted)' }}>
+          <span
+            title={data.note}
+            style={{ color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', cursor: 'help' }}
+          >
             <HelpCircle size={13} />
           </span>
         )}
@@ -73,25 +76,27 @@ export function TableNode({ data }: { data: TableNodeData }) {
               id={`${col.name}-l`}
               style={{
                 background: 'var(--accent)',
-                width: 7,
-                height: 7,
-                border: 'none',
+                width: 8,
+                height: 8,
+                borderRadius: '50%',
+                border: '2px solid var(--bg-secondary)',
+                boxShadow: '0 0 0 1px var(--border-focus)',
               }}
             />
 
             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              {col.pk && <Key size={11} color="#f59e0b" />}
+              {col.pk && <Key size={12} color="#fbbf24" />}
               <span
                 style={{
                   fontWeight: col.pk ? 600 : 400,
-                  color: col.pk ? '#fcd34d' : 'var(--text-primary)',
+                  color: col.pk ? '#fde68a' : 'var(--text-primary)',
                 }}
               >
                 {col.name}
               </span>
             </div>
 
-            <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
               <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>
                 {col.type}
               </span>
@@ -99,9 +104,11 @@ export function TableNode({ data }: { data: TableNodeData }) {
                 <span
                   style={{
                     fontSize: 9,
-                    background: 'var(--purple-bg)',
-                    color: 'var(--purple)',
-                    padding: '1px 3px',
+                    fontWeight: 700,
+                    background: 'rgba(139, 92, 246, 0.25)',
+                    color: '#c4b5fd',
+                    border: '1px solid rgba(139, 92, 246, 0.4)',
+                    padding: '1px 4px',
                     borderRadius: 3,
                   }}
                 >
@@ -117,9 +124,11 @@ export function TableNode({ data }: { data: TableNodeData }) {
               id={`${col.name}-r`}
               style={{
                 background: 'var(--accent)',
-                width: 7,
-                height: 7,
-                border: 'none',
+                width: 8,
+                height: 8,
+                borderRadius: '50%',
+                border: '2px solid var(--bg-secondary)',
+                boxShadow: '0 0 0 1px var(--border-focus)',
               }}
             />
           </div>

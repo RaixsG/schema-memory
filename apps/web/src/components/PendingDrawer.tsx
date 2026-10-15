@@ -157,10 +157,20 @@ export function PendingDrawer() {
                 <span>{promptText}</span>
                 <button
                   className="btn btn-secondary"
-                  style={{ padding: '4px 8px', fontSize: 11, marginLeft: 8 }}
+                  style={{ padding: '6px 10px', fontSize: 11, marginLeft: 8, whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: 5 }}
                   onClick={handleCopy}
                 >
-                  {copied ? <Check size={12} color="var(--success)" /> : <Copy size={12} />}
+                  {copied ? (
+                    <>
+                      <Check size={13} color="var(--success)" />
+                      <span style={{ color: 'var(--success)', fontWeight: 600 }}>Copiado</span>
+                    </>
+                  ) : (
+                    <>
+                      <Copy size={13} />
+                      <span>Copiar</span>
+                    </>
+                  )}
                 </button>
               </div>
             </div>

@@ -123,13 +123,7 @@ export function SchemaCanvas() {
         fitView
       >
         <Background color="#232838" gap={20} size={1} />
-        <Controls
-          style={{
-            backgroundColor: 'var(--bg-secondary)',
-            border: '1px solid var(--border)',
-            fill: 'var(--text-primary)',
-          }}
-        />
+        <Controls />
       </ReactFlow>
     </div>
   );
