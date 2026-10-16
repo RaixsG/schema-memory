@@ -90,8 +90,9 @@ program
 
 program
   .command('setup')
-  .description('Install the Antigravity plugin and link global "sm" CLI command')
-  .option('--print', 'Print plugin configuration without installing')
+  .description('Configure global MCP, skills and rules for OpenCode, Antigravity & standard agents')
+  .option('-t, --target <target>', 'Target environment: all | opencode | antigravity | agents (default: all)', 'all')
+  .option('--print', 'Print configuration without installing')
   .option('--cli-only', 'Only link the global "sm" and "schema-memory" CLI commands in ~/.local/bin')
   .action(async (opts) => {
     try {

@@ -184,18 +184,29 @@ Esto crea el ejecutable `sm` (y `schema-memory`) en `~/.local/bin/`.
 | **Vincular proyecto por ruta** | `sm add /ruta/al/proyecto` | `pnpm sm add /ruta/al/proyecto` |
 | **Ver proyectos y estado** | `sm ls` *(o `sm status`)* | `pnpm status` *(o `pnpm sm ls`)* |
 | **Desvincular proyecto** | `sm rm` *(en la carpeta)* o `sm rm <id>` | `pnpm sm rm <id>` |
-| **Ver configuración del plugin** | `sm setup --print` | `pnpm sm setup --print` |
-| **Instalar plugin en Antigravity** | `sm setup` | `pnpm setup` |
+| **Configuración Global Multi-Agente** | `sm setup` | `pnpm setup` |
+| **Configurar solo OpenCode** | `sm setup --target opencode` | `pnpm sm setup --target opencode` |
+| **Configurar solo Antigravity** | `sm setup --target antigravity` | `pnpm sm setup --target antigravity` |
+| **Previsualizar configuración** | `sm setup --print` | `pnpm sm setup --print` |
 | **Ayuda de comandos** | `sm --help` | `pnpm sm --help` |
+
+### 5.3 ¿Qué instala `sm setup` (`pnpm setup`)?
+`schema-memory` es **100% agnóstico de agente**. Al ejecutar `sm setup` (por defecto `--target all`), configura de manera no destructiva (haciendo *merge* sin borrar tu configuración previa):
+1. **Estándar Abierto Global (`~/.agents/skills/schema-memory/SKILL.md`)**: Leído automáticamente por **OpenCode** y agentes compatibles con el estándar Agent Skills.
+2. **OpenCode Nativo (`~/.config/opencode/`)**:
+   - Inyecta el servidor MCP `schema-memory` dentro de `~/.config/opencode/opencode.json` respetando tus proveedores, temas y otros MCPs existentes.
+   - Añade el bloque delimitado en `~/.config/opencode/AGENTS.md` y el skill en `~/.config/opencode/skills/schema-memory/SKILL.md`.
+3. **Antigravity (`~/.gemini/config/plugins/schema-memory/`)**: Instala el manifiesto, MCP y skill.
+4. **CLI Global (`~/.local/bin/sm`)**: Enlaza el comando `sm` en tu terminal.
 
 ---
 
-## 6. Flujo de Trabajo con la Inteligencia Artificial
+## 6. Flujo de Trabajo con la Inteligencia Artificial (OpenCode / Antigravity / Claude Code)
 
 ```mermaid
 flowchart TD
     A["Dev modela o edita tablas en Web UI"] --> B["Borrador guardado en .schema-memory/pending/change.json"]
-    B --> C["Dev copia prompt desde UI al chat de Antigravity"]
+    B --> C["Dev copia prompt desde UI al chat de su Agente (OpenCode / Antigravity)"]
     C --> D["IA invoca get_pending_changes()"]
     D --> E["IA inicia debate guiado de diseño técnico"]
     E --> F["IA formula draft_adr() con trade-offs y alternativas"]
