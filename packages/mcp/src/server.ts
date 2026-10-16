@@ -1,4 +1,4 @@
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { McpServer, ResourceTemplate } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import {
   listProjects,
@@ -28,11 +28,12 @@ import { resolve } from 'node:path';
 
 export const SERVER_INSTRUCTIONS = `
 Instructions for AI Agent using schema-memory:
-1. Always call get_decisions and get_schema before proposing or making changes to understand existing architecture and the "why" behind it.
-2. When a pending change exists or when proposing a change, engage in a debate with the user about the reasons and trade-offs. Ask targeted questions, one at a time, to uncover context, alternatives, and consequences before calling draft_adr.
-3. NEVER call confirm_change without the user's explicit approval in the conversation.
-4. After confirm_change succeeds, save the returned engramSummary into Engram using your Engram tool. ONLY after that, proceed to modify application code, ORM models, or migration files in the project.
-5. Never edit .schema-memory files directly.
+1. CONTEXT FIRST: Always inspect canonical schema (via resource schema://{project}/dbml or tool get_schema) and past architectural decisions (get_decisions) before proposing schema modifications.
+2. PROPOSING CHANGES: Call propose_change with your proposed DBML. If it reports zero differences, do not draft an ADR.
+3. DEBATE ETIQUETTE: When a pending change exists, debate reasons and trade-offs with the user. Ask at most 1-2 focused questions at a time. Identify viable alternatives and consequences before calling draft_adr.
+4. STRICT APPROVAL: NEVER call confirm_change without the user's explicit, conversational approval (userConfirmed=true).
+5. MEMORY INTEGRATION: After confirm_change succeeds, save the returned engramSummary into Engram using your Engram tool. ONLY after that, proceed to modify application code, ORM models, or migration files in the project.
+6. STRICT ISOLATION: Interact with schema-memory ONLY via its MCP tools and resources. Never search for, read, or edit .schema-memory files directly.
 `.trim();
 
 function jsonResponse(data: unknown) {
@@ -63,6 +64,401 @@ export function createMcpServer(): McpServer {
       instructions: SERVER_INSTRUCTIONS,
     }
   );
+
+  // ==========================================
+  // MCP RESOURCES
+  // ==========================================
+
+  // 1. Canonical DBML schema (text/plain)
+  server.registerResource(
+    'canonical-dbml',
+    new ResourceTemplate('schema://{project}/dbml', {
+      list: async () => {
+        try {
+          const projects = await listProjects();
+          return {
+            resources: projects.map((p) => ({
+              uri: `schema://${p.id}/dbml`,
+              name: `Canonical DBML: ${p.name}`,
+              mimeType: 'text/plain',
+            })),
+          };
+        } catch {
+          return { resources: [] };
+        }
+      },
+      complete: {
+        project: async (value) => {
+          const projects = await listProjects();
+          return projects.map((p) => p.id).filter((id) => id.startsWith(value));
+        },
+      },
+    }),
+    {
+      description: 'Canonical DBML schema definition of the project',
+      mimeType: 'text/plain',
+    },
+    async (uri, { project }) => {
+      const resolved = await resolveProject({ project: project as string });
+      const schemaPath = resolve(resolved.path, '.schema-memory', 'schema.dbml');
+      const dbml = (await readIfExists(schemaPath)) || '';
+      return {
+        contents: [
+          {
+            uri: uri.href,
+            mimeType: 'text/plain',
+            text: dbml,
+          },
+        ],
+      };
+    }
+  );
+
+  // 2. Parsed Model AST (application/json)
+  server.registerResource(
+    'canonical-model',
+    new ResourceTemplate('schema://{project}/model', {
+      list: async () => {
+        try {
+          const projects = await listProjects();
+          return {
+            resources: projects.map((p) => ({
+              uri: `schema://${p.id}/model`,
+              name: `Parsed Schema Model (JSON): ${p.name}`,
+              mimeType: 'application/json',
+            })),
+          };
+        } catch {
+          return { resources: [] };
+        }
+      },
+      complete: {
+        project: async (value) => {
+          const projects = await listProjects();
+          return projects.map((p) => p.id).filter((id) => id.startsWith(value));
+        },
+      },
+    }),
+    {
+      description: 'Parsed structural model (tables, columns, relations, indexes) in JSON format',
+      mimeType: 'application/json',
+    },
+    async (uri, { project }) => {
+      const resolved = await resolveProject({ project: project as string });
+      const schemaPath = resolve(resolved.path, '.schema-memory', 'schema.dbml');
+      const dbml = (await readIfExists(schemaPath)) || '';
+      const model = parseSchema(dbml);
+      return {
+        contents: [
+          {
+            uri: uri.href,
+            mimeType: 'application/json',
+            text: JSON.stringify(model, null, 2),
+          },
+        ],
+      };
+    }
+  );
+
+  // 3. Pending Change (application/json)
+  server.registerResource(
+    'pending-change',
+    new ResourceTemplate('schema://{project}/pending', {
+      list: async () => {
+        try {
+          const projects = await listProjects();
+          return {
+            resources: projects.map((p) => ({
+              uri: `schema://${p.id}/pending`,
+              name: `Pending changes: ${p.name}`,
+              mimeType: 'application/json',
+            })),
+          };
+        } catch {
+          return { resources: [] };
+        }
+      },
+      complete: {
+        project: async (value) => {
+          const projects = await listProjects();
+          return projects.map((p) => p.id).filter((id) => id.startsWith(value));
+        },
+      },
+    }),
+    {
+      description: 'Currently pending schema change diff, proposed DBML, and draft ADR (JSON)',
+      mimeType: 'application/json',
+    },
+    async (uri, { project }) => {
+      const resolved = await resolveProject({ project: project as string });
+      const pending = await getPending(resolved.path);
+      return {
+        contents: [
+          {
+            uri: uri.href,
+            mimeType: 'application/json',
+            text: JSON.stringify(
+              pending || { hasPending: false, message: 'No pending changes.' },
+              null,
+              2
+            ),
+          },
+        ],
+      };
+    }
+  );
+
+  // 4. Project ADRs (application/json)
+  server.registerResource(
+    'project-adrs',
+    new ResourceTemplate('schema://{project}/adrs', {
+      list: async () => {
+        try {
+          const projects = await listProjects();
+          return {
+            resources: projects.map((p) => ({
+              uri: `schema://${p.id}/adrs`,
+              name: `ADRs list: ${p.name}`,
+              mimeType: 'application/json',
+            })),
+          };
+        } catch {
+          return { resources: [] };
+        }
+      },
+      complete: {
+        project: async (value) => {
+          const projects = await listProjects();
+          return projects.map((p) => p.id).filter((id) => id.startsWith(value));
+        },
+      },
+    }),
+    {
+      description: 'Summary listing of Architecture Decision Records (ADRs) for the project',
+      mimeType: 'application/json',
+    },
+    async (uri, { project }) => {
+      const resolved = await resolveProject({ project: project as string });
+      const adrs = await listAdrs(resolved.path);
+      return {
+        contents: [
+          {
+            uri: uri.href,
+            mimeType: 'application/json',
+            text: JSON.stringify(
+              adrs.map((a) => ({
+                id: a.metadata.id,
+                title: a.metadata.title,
+                status: a.metadata.status,
+                date: a.metadata.date,
+                affects: a.metadata.affects,
+                decision: a.decision,
+              })),
+              null,
+              2
+            ),
+          },
+        ],
+      };
+    }
+  );
+
+  // 5. Specific ADR Content (text/markdown)
+  server.registerResource(
+    'adr-content',
+    new ResourceTemplate('adr://{project}/{id}', {
+      list: async () => {
+        try {
+          const projects = await listProjects();
+          const resources: Array<{ uri: string; name: string; mimeType: string }> = [];
+          for (const p of projects) {
+            const adrs = await listAdrs(p.path);
+            for (const a of adrs) {
+              resources.push({
+                uri: `adr://${p.id}/${a.metadata.id}`,
+                name: `ADR-${a.metadata.id}: ${a.metadata.title} (${p.name})`,
+                mimeType: 'text/markdown',
+              });
+            }
+          }
+          return { resources };
+        } catch {
+          return { resources: [] };
+        }
+      },
+      complete: {
+        project: async (value) => {
+          const projects = await listProjects();
+          return projects.map((p) => p.id).filter((id) => id.startsWith(value));
+        },
+        id: async (value) => {
+          const projects = await listProjects();
+          const allIds: string[] = [];
+          for (const p of projects) {
+            const adrs = await listAdrs(p.path);
+            allIds.push(...adrs.map((a) => a.metadata.id));
+          }
+          return allIds.filter((id) => id.startsWith(value));
+        },
+      },
+    }),
+    {
+      description: 'Full markdown content of a specific Architecture Decision Record (ADR)',
+      mimeType: 'text/markdown',
+    },
+    async (uri, { project, id }) => {
+      const resolved = await resolveProject({ project: project as string });
+      const adr = await readAdr(resolved.path, id as string);
+      if (!adr) {
+        throw new Error(`ADR "${id}" not found in project "${project}".`);
+      }
+      return {
+        contents: [
+          {
+            uri: uri.href,
+            mimeType: 'text/markdown',
+            text: adr.content,
+          },
+        ],
+      };
+    }
+  );
+
+  // ==========================================
+  // MCP PROMPTS
+  // ==========================================
+
+  // 1. bootstrap_project prompt
+  server.registerPrompt(
+    'bootstrap_project',
+    {
+      title: 'Bootstrap Project Schema',
+      description:
+        'Step-by-step workflow for the agent to inspect a codebase, infer the canonical DBML schema, and generate initial reconstructed ADRs.',
+      argsSchema: {
+        project: z.string().optional().describe('Project ID or directory path'),
+      },
+    },
+    async (args) => {
+      let resolvedInfo = '';
+      try {
+        if (args.project) {
+          const resolved = await resolveProject({ project: args.project });
+          const config = await readConfig(resolved.path);
+          resolvedInfo = `\nTarget Project: "${resolved.name}" (${resolved.id})\nLocation: "${resolved.path}"\nDetected Stack: ${config?.stack.join(', ') || 'generic'}`;
+        }
+      } catch {
+        // ignore
+      }
+
+      return {
+        messages: [
+          {
+            role: 'user',
+            content: {
+              type: 'text',
+              text: [
+                `Please bootstrap schema-memory for the repository.${resolvedInfo}`,
+                '',
+                'Execution steps:',
+                '1. Inspect ONLY models, migration files, and ORM schema definitions inside this project repository.',
+                '2. Synthesize the canonical database schema into standard DBML format.',
+                '3. Call the MCP tool `import_schema` with the synthesized DBML and reconstructed ADRs documenting existing architectural decisions.',
+                '4. Important: Never search for, read, or analyze schema-memory source code. Strictly inspect the application codebase.',
+              ].join('\n'),
+            },
+          },
+        ],
+      };
+    }
+  );
+
+  // 2. debate_pending_change prompt
+  server.registerPrompt(
+    'debate_pending_change',
+    {
+      title: 'Debate Pending Schema Change',
+      description:
+        'Guides the agent to review pending changes, interview the user about trade-offs, and draft an ADR.',
+      argsSchema: {
+        project: z.string().optional().describe('Project ID or directory path'),
+      },
+    },
+    async (args) => {
+      let pendingSummary = 'No project specified or no pending change loaded.';
+      try {
+        const resolved = await resolveProject({ project: args.project });
+        const pending = await getPending(resolved.path);
+        if (pending) {
+          const diffSummary = pending.changes
+            .map((c) => `- ${c.kind}: ${'table' in c ? c.table : 'name' in c ? (c as any).name : 'schema'}`)
+            .join('\n');
+          pendingSummary = `Project "${resolved.name}" has pending changes affecting: ${pending.affects.join(', ') || 'general'}\nSummary of changes:\n${diffSummary || '(none)'}`;
+        }
+      } catch {
+        // ignore
+      }
+
+      return {
+        messages: [
+          {
+            role: 'user',
+            content: {
+              type: 'text',
+              text: [
+                'Please review and debate the pending schema change with the user:',
+                '',
+                pendingSummary,
+                '',
+                'Workflow instructions:',
+                '1. Review the proposed diff against canonical architecture and past ADRs (call `get_decisions`).',
+                '2. Ask the user 1 or 2 targeted, high-impact questions about context, motivation, or business requirements.',
+                '3. Discuss alternative designs considered and why they might be discarded.',
+                '4. Once aligned with the user, call `draft_adr` with title, context, decision, alternatives, and consequences.',
+                '5. Ask the user for explicit confirmation before calling `confirm_change(userConfirmed: true)`.',
+              ].join('\n'),
+            },
+          },
+        ],
+      };
+    }
+  );
+
+  // 3. check_drift prompt
+  server.registerPrompt(
+    'check_drift',
+    {
+      title: 'Check Schema Drift',
+      description:
+        'Guides the agent to extract the latest schema from application code and check for drift against schema.dbml.',
+      argsSchema: {
+        project: z.string().optional().describe('Project ID or directory path'),
+      },
+    },
+    async () => {
+      return {
+        messages: [
+          {
+            role: 'user',
+            content: {
+              type: 'text',
+              text: [
+                'Please verify if the project database schema has drifted from schema-memory:',
+                '1. Inspect application models, migrations, or database definitions in the repository.',
+                '2. Represent the current code state in standard DBML format.',
+                '3. Call `check_drift` passing `candidateDbml` to compare against canonical schema.dbml.',
+                '4. Report any discrepancies found to the user and suggest next steps.',
+              ].join('\n'),
+            },
+          },
+        ],
+      };
+    }
+  );
+
+  // ==========================================
+  // MCP TOOLS
+  // ==========================================
 
   // 1. list_projects
   server.registerTool(
@@ -213,11 +609,36 @@ export function createMcpServer(): McpServer {
     async (args) => {
       try {
         const resolved = await resolveProject({ project: args.project });
+
+        // Pre-validate DBML syntax with clear diagnostics
+        const valid = validateDbml(args.dbml);
+        if (!valid.ok) {
+          const first = valid.errors[0];
+          return errorResponse(
+            `Invalid DBML syntax: ${first?.message} (line ${first?.line}, col ${first?.column})`,
+            'INVALID_DBML'
+          );
+        }
+
         const details = await savePending(resolved.path, {
           proposedDbml: args.dbml,
           source: 'agent',
           note: args.note,
         });
+
+        // Zero-diff guardrail: detect if proposed DBML matches canonical schema exactly
+        if (details.changes.length === 0) {
+          return jsonResponse({
+            project: resolved.id,
+            proposed: false,
+            changesCount: 0,
+            message:
+              'No schema differences detected between proposed DBML and canonical schema.dbml.',
+            changes: [],
+            affects: [],
+          });
+        }
+
         return jsonResponse({
           project: resolved.id,
           proposed: true,
@@ -313,6 +734,14 @@ export function createMcpServer(): McpServer {
 
       try {
         const resolved = await resolveProject({ project: args.project });
+        const pending = await getPending(resolved.path);
+        if (pending?.stale) {
+          return errorResponse(
+            'Confirmation blocked: pending change is stale. The canonical schema on disk changed after this change was proposed. Re-propose or discard.',
+            'STALE_CHANGE'
+          );
+        }
+
         const result = await confirmChange(resolved.path);
         return jsonResponse({
           project: resolved.id,

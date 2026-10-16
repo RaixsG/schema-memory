@@ -67,6 +67,75 @@ describe('M4: MCP Server and Tool Integration', () => {
     expect(tools.length).toBe(12);
   });
 
+  it('exposes native MCP resources and templates for ambient schema access', async () => {
+    // 1. List resource templates
+    const { resourceTemplates } = await client.listResourceTemplates();
+    const uris = resourceTemplates?.map((r) => r.uriTemplate) || [];
+    expect(uris).toContain('schema://{project}/dbml');
+    expect(uris).toContain('schema://{project}/model');
+    expect(uris).toContain('schema://{project}/pending');
+    expect(uris).toContain('schema://{project}/adrs');
+    expect(uris).toContain('adr://{project}/{id}');
+
+    // 2. Read canonical DBML resource
+    const dbmlRes = await client.readResource({
+      uri: 'schema://mcp-test-project/dbml',
+    });
+    expect(dbmlRes.contents.length).toBe(1);
+    expect(dbmlRes.contents[0].mimeType).toBe('text/plain');
+
+    // 3. Read model AST resource
+    const modelRes = await client.readResource({
+      uri: 'schema://mcp-test-project/model',
+    });
+    expect(modelRes.contents.length).toBe(1);
+    expect(modelRes.contents[0].mimeType).toBe('application/json');
+    const modelObj = JSON.parse(modelRes.contents[0].text as string);
+    expect(modelObj.tables).toBeDefined();
+  });
+
+  it('exposes interactive MCP prompts for guided agent workflows', async () => {
+    const { prompts } = await client.listPrompts();
+    const promptNames = prompts.map((p) => p.name);
+    expect(promptNames).toContain('bootstrap_project');
+    expect(promptNames).toContain('debate_pending_change');
+    expect(promptNames).toContain('check_drift');
+
+    // Test getPrompt on debate_pending_change
+    const promptRes = await client.getPrompt({
+      name: 'debate_pending_change',
+      arguments: { project: 'mcp-test-project' },
+    });
+    expect(promptRes.messages.length).toBe(1);
+    expect(promptRes.messages[0].content.text).toContain('debate the pending schema change');
+  });
+
+  it('enforces zero-diff guardrail in propose_change', async () => {
+    // Initial import
+    const dbml = 'Table users {\n  id int [pk]\n}\n';
+    await client.callTool({
+      name: 'import_schema',
+      arguments: {
+        project: 'mcp-test-project',
+        dbml,
+      },
+    });
+
+    // Propose identical DBML
+    const res = (await client.callTool({
+      name: 'propose_change',
+      arguments: {
+        project: 'mcp-test-project',
+        dbml,
+      },
+    })) as any;
+
+    const data = JSON.parse(res.content[0].text);
+    expect(data.proposed).toBe(false);
+    expect(data.changesCount).toBe(0);
+    expect(data.message).toContain('No schema differences detected');
+  });
+
   it('runs complete agent lifecycle: import -> propose -> debate -> confirm -> drift', async () => {
     // 1. list_projects
     const listRes = (await client.callTool({
