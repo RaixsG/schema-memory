@@ -1,16 +1,24 @@
 {
   "name": "@schema-memory/cli",
   "version": "0.1.0",
+  "description": "Live database schema memory, ADR workflow & AI pair programming companion",
   "type": "module",
   "bin": {
     "schema-memory": "./dist/index.js",
     "sm": "./dist/index.js"
   },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     }
   },

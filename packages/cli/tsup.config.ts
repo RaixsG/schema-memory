@@ -1,12 +1,34 @@
 import { defineConfig } from 'tsup';
+import { cp, mkdir } from 'node:fs/promises';
+import { resolve, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { existsSync } from 'node:fs';
+
+const currentDir = dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig({
   entry: ['src/index.ts'],
   format: ['esm'],
-  dts: true,
   clean: true,
   sourcemap: true,
+  shims: true,
   banner: {
-    js: '#!/usr/bin/env node',
+    js: `#!/usr/bin/env node
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);`,
+  },
+  noExternal: [
+    '@schema-memory/core',
+    '@schema-memory/mcp',
+    '@schema-memory/server',
+  ],
+  async onSuccess() {
+    const webDist = resolve(currentDir, '../../apps/web/dist');
+    const targetWeb = resolve(currentDir, 'dist/web');
+    if (existsSync(webDist)) {
+      await mkdir(targetWeb, { recursive: true });
+      await cp(webDist, targetWeb, { recursive: true });
+      console.log('✅ Static web assets bundled into dist/web');
+    }
   },
 });

@@ -15,7 +15,10 @@
     "setup": "node packages/cli/dist/index.js setup",
     "doctor": "node packages/cli/dist/index.js doctor",
     "link-cli": "node packages/cli/dist/index.js setup --cli-only",
-    "sm": "node packages/cli/dist/index.js"
+    "sm": "node packages/cli/dist/index.js",
+    "bundle:cli": "pnpm --filter @schema-memory/web build && pnpm --filter @schema-memory/cli build",
+    "pack:cli": "pnpm bundle:cli && pnpm --filter @schema-memory/cli pack",
+    "build:binary": "pnpm bundle:cli && bun build ./packages/cli/dist/index.js --compile --outfile sm"
   },
   "devDependencies": {
     "@types/node": "^22.13.4",

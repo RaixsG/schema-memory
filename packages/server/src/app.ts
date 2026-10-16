@@ -12,6 +12,8 @@ function findWebDistDir(): string | null {
   try {
     const currentDir = dirname(fileURLToPath(import.meta.url));
     const candidates = [
+      resolve(currentDir, 'web'),
+      resolve(currentDir, '../web'),
       resolve(currentDir, '../../../apps/web/dist'),
       resolve(currentDir, '../../apps/web/dist'),
       resolve(currentDir, '../apps/web/dist'),
