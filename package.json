@@ -16,9 +16,15 @@
     "doctor": "node packages/cli/dist/index.js doctor",
     "link-cli": "node packages/cli/dist/index.js setup --cli-only",
     "sm": "node packages/cli/dist/index.js",
-    "bundle:cli": "pnpm --filter @schema-memory/web build && pnpm --filter @schema-memory/cli build",
-    "pack:cli": "pnpm bundle:cli && pnpm --filter @schema-memory/cli pack",
-    "build:binary": "pnpm bundle:cli && bun build ./packages/cli/dist/index.js --compile --outfile sm"
+    "bundle:cli": "pnpm --filter @schema-memory/web build && pnpm --filter schema-memory build",
+    "pack:cli": "pnpm bundle:cli && pnpm --dir packages/cli pack",
+    "build:binary": "pnpm bundle:cli && bun build ./packages/cli/dist/index.js --compile --outfile sm",
+    "build:binaries": "pnpm bundle:cli && node scripts/build-binaries.mjs"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/RaixsG/schema-memory.git"
   },
   "devDependencies": {
     "@types/node": "^22.13.4",

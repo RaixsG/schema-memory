@@ -1,14 +1,37 @@
 {
-  "name": "@schema-memory/cli",
+  "name": "schema-memory",
   "version": "0.1.0",
   "description": "Live database schema memory, ADR workflow & AI pair programming companion",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/RaixsG/schema-memory.git"
+  },
+  "bugs": {
+    "url": "https://github.com/RaixsG/schema-memory/issues"
+  },
+  "homepage": "https://github.com/RaixsG/schema-memory#readme",
+  "keywords": [
+    "schema",
+    "database",
+    "dbml",
+    "mcp",
+    "ai",
+    "agents",
+    "opencode",
+    "antigravity",
+    "adr",
+    "architecture"
+  ],
   "type": "module",
   "bin": {
     "schema-memory": "./dist/index.js",
     "sm": "./dist/index.js"
   },
   "files": [
-    "dist"
+    "dist",
+    "README.md",
+    "LICENSE"
   ],
   "engines": {
     "node": ">=20.0.0"

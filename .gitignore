@@ -8,3 +8,9 @@ coverage/
 .corepack/
 .pnpm-store/
 .agents/
+*.tgz
+dist-bin/
+sm
+sm-*
+packages/cli/README.md
+packages/cli/LICENSE

@@ -30,5 +30,14 @@ const require = createRequire(import.meta.url);`,
       await cp(webDist, targetWeb, { recursive: true });
       console.log('✅ Static web assets bundled into dist/web');
     }
+
+    const rootReadme = resolve(currentDir, '../../README.md');
+    const rootLicense = resolve(currentDir, '../../LICENSE');
+    if (existsSync(rootReadme)) {
+      await cp(rootReadme, resolve(currentDir, 'README.md'));
+    }
+    if (existsSync(rootLicense)) {
+      await cp(rootLicense, resolve(currentDir, 'LICENSE'));
+    }
   },
 });
