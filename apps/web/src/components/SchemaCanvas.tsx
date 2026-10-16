@@ -92,6 +92,8 @@ export function SchemaCanvas() {
   const updateLayout = useSchemaStore((s) => s.updateLayout);
   const selectedTable = useSchemaStore((s) => s.selectedTable);
   const setSelectedTable = useSchemaStore((s) => s.setSelectedTable);
+  const selectedEdgeIndex = useSchemaStore((s) => s.selectedEdgeIndex);
+  const setSelectedEdgeIndex = useSchemaStore((s) => s.setSelectedEdgeIndex);
   const addRef = useSchemaStore((s) => s.addRef);
 
   const toggleFullscreen = useCallback(() => {
@@ -111,6 +113,84 @@ export function SchemaCanvas() {
     return () => document.removeEventListener('fullscreenchange', handleFsChange);
   }, []);
 
+  // Listen to Escape key to deselect table or relationship
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setSelectedTable(null);
+        setSelectedEdgeIndex(null);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [setSelectedTable, setSelectedEdgeIndex]);
+
+  // Active relationship / table graph context
+  const activeContext = useMemo(() => {
+    if (!model) {
+      return {
+        selectedRef: null,
+        activeTableNames: new Set<string>(),
+        sourceTableName: null as string | null,
+        targetTableName: null as string | null,
+        sourceColumns: [] as string[],
+        targetColumns: [] as string[],
+        connectedEdgeIndices: new Set<number>(),
+        isFiltering: false,
+      };
+    }
+
+    if (selectedEdgeIndex !== null && model.refs[selectedEdgeIndex]) {
+      const ref = model.refs[selectedEdgeIndex];
+      const activeTableNames = new Set<string>([ref.from.table, ref.to.table]);
+      return {
+        selectedRef: ref,
+        activeTableNames,
+        sourceTableName: ref.from.table,
+        targetTableName: ref.to.table,
+        sourceColumns: ref.from.columns,
+        targetColumns: ref.to.columns,
+        connectedEdgeIndices: new Set<number>([selectedEdgeIndex]),
+        isFiltering: true,
+      };
+    }
+
+    if (selectedTable) {
+      const activeTableNames = new Set<string>([selectedTable]);
+      const connectedEdgeIndices = new Set<number>();
+
+      model.refs.forEach((r, idx) => {
+        if (r.from.table === selectedTable || r.to.table === selectedTable) {
+          connectedEdgeIndices.add(idx);
+          activeTableNames.add(r.from.table);
+          activeTableNames.add(r.to.table);
+        }
+      });
+
+      return {
+        selectedRef: null,
+        activeTableNames,
+        sourceTableName: null,
+        targetTableName: null,
+        sourceColumns: [],
+        targetColumns: [],
+        connectedEdgeIndices,
+        isFiltering: true,
+      };
+    }
+
+    return {
+      selectedRef: null,
+      activeTableNames: new Set<string>(),
+      sourceTableName: null,
+      targetTableName: null,
+      sourceColumns: [],
+      targetColumns: [],
+      connectedEdgeIndices: new Set<number>(),
+      isFiltering: false,
+    };
+  }, [model, selectedEdgeIndex, selectedTable]);
+
   // Build nodes from model.tables
   const initialNodes: Node[] = useMemo(() => {
     if (!model) return [];
@@ -120,20 +200,53 @@ export function SchemaCanvas() {
         y: 50 + Math.floor(index / 3) * 280,
       };
 
+      const isSelected = selectedTable === table.name;
+      const isDimmed = activeContext.isFiltering && !activeContext.activeTableNames.has(table.name);
+
+      let isRelationshipEndpoint: 'source' | 'target' | null = null;
+      const highlightedColumns: Array<{ name: string; role: 'source' | 'target' }> = [];
+
+      if (activeContext.selectedRef) {
+        if (table.name === activeContext.sourceTableName) {
+          isRelationshipEndpoint = 'source';
+          activeContext.sourceColumns.forEach((colName) => {
+            highlightedColumns.push({ name: colName, role: 'source' });
+          });
+        }
+        if (table.name === activeContext.targetTableName) {
+          isRelationshipEndpoint = 'target';
+          activeContext.targetColumns.forEach((colName) => {
+            highlightedColumns.push({ name: colName, role: 'target' });
+          });
+        }
+      } else if (selectedTable) {
+        // Highlight columns that participate in connected references with selectedTable
+        model.refs.forEach((r) => {
+          if (r.from.table === table.name && r.to.table === selectedTable) {
+            r.from.columns.forEach((c) => highlightedColumns.push({ name: c, role: 'source' }));
+          } else if (r.to.table === table.name && r.from.table === selectedTable) {
+            r.to.columns.forEach((c) => highlightedColumns.push({ name: c, role: 'target' }));
+          }
+        });
+      }
+
       return {
         id: table.name,
         type: 'table',
         position: pos,
+        selected: isSelected,
         data: {
           name: table.name,
           columns: table.columns,
           note: table.note,
-          isSelected: selectedTable === table.name,
-          onSelect: () => setSelectedTable(table.name),
+          isSelected,
+          isDimmed,
+          isRelationshipEndpoint,
+          highlightedColumns,
         },
       };
     });
-  }, [model, layout, selectedTable, setSelectedTable]);
+  }, [model, layout, selectedTable, activeContext]);
 
   // Build edges from model.refs
   const initialEdges: Edge[] = useMemo(() => {
@@ -142,23 +255,82 @@ export function SchemaCanvas() {
       const fromCol = ref.from.columns[0] || 'id';
       const toCol = ref.to.columns[0] || 'id';
 
+      const isSelectedEdge = selectedEdgeIndex === idx;
+      const isConnectedToActive = activeContext.connectedEdgeIndices.has(idx);
+      const isDimmed = activeContext.isFiltering && !isConnectedToActive;
+
+      let strokeColor = 'var(--accent)';
+      let strokeWidth = 1.5;
+      let isAnimated = false;
+      let zIndex = 0;
+      let filter: string | undefined = undefined;
+
+      if (isSelectedEdge) {
+        strokeColor = '#3b82f6';
+        strokeWidth = 3;
+        isAnimated = true;
+        zIndex = 100;
+        filter = 'drop-shadow(0 0 8px rgba(59, 130, 246, 0.75))';
+      } else if (isConnectedToActive) {
+        strokeColor = '#60a5fa';
+        strokeWidth = 2.2;
+        isAnimated = true;
+        zIndex = 50;
+      } else if (isDimmed) {
+        strokeColor = 'rgba(255, 255, 255, 0.08)';
+        strokeWidth = 1;
+      }
+
+      // Format relation symbol / badge label
+      let relationLabel = '';
+      if (ref.relation === 'many-to-one') relationLabel = 'N : 1';
+      else if (ref.relation === 'one-to-many') relationLabel = '1 : N';
+      else if (ref.relation === 'one-to-one') relationLabel = '1 : 1';
+      else if (ref.relation === 'many-to-many') relationLabel = 'N : M';
+
       return {
-        id: `ref-${ref.from.table}-${fromCol}-${ref.to.table}-${toCol}-${idx}`,
+        id: `ref-${idx}`,
         source: ref.from.table,
         target: ref.to.table,
         sourceHandle: `${fromCol}-r`,
         targetHandle: `${toCol}-l`,
-        animated: false,
-        style: { stroke: 'var(--accent)', strokeWidth: 1.5 },
+        type: 'smoothstep',
+        animated: isAnimated,
+        zIndex,
+        selected: isSelectedEdge,
+        interactionWidth: 20,
+        label: isSelectedEdge || isConnectedToActive ? relationLabel : undefined,
+        labelStyle: {
+          fontSize: 10,
+          fontWeight: 700,
+          fill: isSelectedEdge ? '#93c5fd' : '#cbd5e1',
+          fontFamily: 'var(--font-mono)',
+        },
+        labelBgStyle: {
+          fill: '#1a1e2b',
+          fillOpacity: 0.95,
+          stroke: isSelectedEdge ? '#3b82f6' : 'var(--border)',
+          strokeWidth: 1,
+          rx: 4,
+          ry: 4,
+        },
+        labelBgPadding: [6, 3] as [number, number],
+        style: {
+          stroke: strokeColor,
+          strokeWidth,
+          filter,
+          opacity: isDimmed ? 0.15 : 1,
+          transition: 'stroke 0.2s ease, stroke-width 0.2s ease, opacity 0.2s ease',
+        },
         markerEnd: {
           type: MarkerType.ArrowClosed,
-          color: 'var(--accent)',
-          width: 14,
-          height: 14,
+          color: strokeColor,
+          width: isSelectedEdge ? 16 : 14,
+          height: isSelectedEdge ? 16 : 14,
         },
       };
     });
-  }, [model]);
+  }, [model, selectedEdgeIndex, activeContext]);
 
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
@@ -241,6 +413,20 @@ export function SchemaCanvas() {
         onNodesChange={isLocked ? undefined : onNodesChange}
         onEdgesChange={isLocked ? undefined : onEdgesChange}
         onNodeDragStop={onNodeDragStop}
+        onNodeClick={isLocked ? undefined : (_, node) => setSelectedTable(node.id)}
+        onEdgeClick={
+          isLocked
+            ? undefined
+            : (_, edge) => setSelectedEdgeIndex(Number(edge.id.replace('ref-', '')))
+        }
+        onPaneClick={
+          isLocked
+            ? undefined
+            : () => {
+                setSelectedTable(null);
+                setSelectedEdgeIndex(null);
+              }
+        }
         onConnect={onConnect}
         nodesDraggable={!isLocked}
         nodesConnectable={!isLocked}

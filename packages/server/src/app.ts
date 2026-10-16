@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
+import { streamSSE } from 'hono/streaming';
 import { securityMiddleware } from './security.js';
 import { listDirectories } from './fs-browser.js';
 import {
@@ -19,10 +20,12 @@ import {
   readAdr,
   AdrStatus,
   Dialect,
+  computeProjectFingerprint,
 } from '@schema-memory/core';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { existsSync } from 'node:fs';
+import { readdir } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { serveStatic } from '@hono/node-server/serve-static';
 
@@ -48,6 +51,12 @@ function findWebDistDir(): string | null {
 
 export function createApp(): Hono {
   const app = new Hono();
+
+  // Central error handler
+  app.onError((err, c) => {
+    console.error('Unhandled API error:', err);
+    return c.json({ error: err.message || 'Internal server error' }, 500);
+  });
 
   // Security & CORS
   app.use('*', securityMiddleware);
@@ -209,31 +218,103 @@ export function createApp(): Hono {
     }
   });
 
-  // 6b. Lightweight Sync Fingerprint for live agent updates
+  // 6b. Fast O(1) Sync Fingerprint for live agent updates
   app.get('/api/projects/:id/sync', async (c) => {
     try {
       const id = c.req.param('id');
       const resolved = await resolveProject({ project: id });
-      const schemaPath = resolve(resolved.path, '.schema-memory', 'schema.dbml');
-      const dbml = (await readIfExists(schemaPath)) || '';
-      const pending = await getPending(resolved.path);
-      const adrs = await listAdrs(resolved.path);
+      const schemaDir = resolve(resolved.path, '.schema-memory');
+      const changePath = resolve(schemaDir, 'pending', 'change.json');
+      const adrDir = resolve(schemaDir, 'adr');
 
-      const payload = JSON.stringify({
-        dbml,
-        pendingUpdatedAt: pending?.change?.updatedAt || null,
-        pendingProposed: pending?.change?.proposedDbml || null,
-        pendingDraftTitle: pending?.draft?.title || null,
-        pendingDraftDecision: pending?.draft?.decision || null,
-        adrsSig: adrs.map((a) => `${a.metadata.id}:${a.metadata.status}:${a.metadata.title}`),
-      });
+      const fingerprint = await computeProjectFingerprint(resolved.path);
+      const hasPending = existsSync(changePath);
 
-      const fingerprint = createHash('sha1').update(payload).digest('hex');
+      let adrCount = 0;
+      try {
+        if (existsSync(adrDir)) {
+          const files = await readdir(adrDir);
+          adrCount = files.filter((f) => f.endsWith('.md')).length;
+        }
+      } catch {
+        adrCount = 0;
+      }
 
       return c.json({
         fingerprint,
-        hasPending: pending !== null,
-        adrCount: adrs.length,
+        hasPending,
+        adrCount,
+      });
+    } catch (err: any) {
+      return c.json({ error: err.message }, 400);
+    }
+  });
+
+  // 6c. Server-Sent Events (SSE) for Real-Time Reactivity
+  app.get('/api/projects/:id/events', async (c) => {
+    try {
+      const id = c.req.param('id');
+      const resolved = await resolveProject({ project: id });
+      const schemaDir = resolve(resolved.path, '.schema-memory');
+
+      return streamSSE(c, async (stream) => {
+        const initialFp = await computeProjectFingerprint(resolved.path);
+        await stream.writeSSE({
+          data: JSON.stringify({ type: 'connected', fingerprint: initialFp }),
+          event: 'message',
+        });
+
+        let lastFp = initialFp;
+        let debounceTimer: any = null;
+        let watcher: any = null;
+
+        try {
+          if (existsSync(schemaDir)) {
+            const { watch } = await import('node:fs');
+            watcher = watch(schemaDir, { recursive: true }, () => {
+              clearTimeout(debounceTimer);
+              debounceTimer = setTimeout(async () => {
+                try {
+                  const currentFp = await computeProjectFingerprint(resolved.path);
+                  if (currentFp !== lastFp) {
+                    lastFp = currentFp;
+                    await stream.writeSSE({
+                      data: JSON.stringify({ type: 'sync', fingerprint: currentFp }),
+                      event: 'message',
+                    });
+                  }
+                } catch {
+                  // ignore transient read errors
+                }
+              }, 150);
+            });
+          }
+        } catch {
+          // ignore watcher failure
+        }
+
+        const pingInterval = setInterval(async () => {
+          try {
+            await stream.writeSSE({
+              data: JSON.stringify({ type: 'ping' }),
+              event: 'ping',
+            });
+          } catch {
+            clearInterval(pingInterval);
+          }
+        }, 15000);
+
+        stream.onAbort(() => {
+          clearTimeout(debounceTimer);
+          clearInterval(pingInterval);
+          if (watcher) {
+            try {
+              watcher.close();
+            } catch {
+              // ignore
+            }
+          }
+        });
       });
     } catch (err: any) {
       return c.json({ error: err.message }, 400);

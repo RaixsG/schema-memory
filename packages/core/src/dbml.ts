@@ -82,6 +82,7 @@ export function parseSchema(src: string): SchemaModel {
         name: idx.name || undefined,
         columns: (idx.columns || []).map((c: any) => c.value),
         unique: Boolean(idx.unique),
+        pk: Boolean(idx.pk || idx.type === 'pk'),
       }));
 
       tables.push({

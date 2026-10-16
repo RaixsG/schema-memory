@@ -138,6 +138,13 @@ describe('M5: Server REST API and Security', () => {
       expect(syncData2.hasPending).toBe(true);
       expect(syncData2.fingerprint).not.toBe(syncData1.fingerprint);
 
+      // 7c. SSE events endpoint responds with text/event-stream
+      const eventsRes = await app.request('/api/projects/rest-project/events', {
+        headers: localHeaders,
+      });
+      expect(eventsRes.status).toBe(200);
+      expect(eventsRes.headers.get('content-type')).toContain('text/event-stream');
+
       // 8. Get pending change
       const getPendingRes = await app.request(
         '/api/projects/rest-project/pending',

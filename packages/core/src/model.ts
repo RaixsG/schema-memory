@@ -16,6 +16,7 @@ export const Index = z.object({
   name: z.string().optional(),
   columns: z.array(z.string()),
   unique: z.boolean().default(false),
+  pk: z.boolean().default(false),
 });
 export type Index = z.infer<typeof Index>;
 

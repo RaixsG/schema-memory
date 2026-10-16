@@ -23,11 +23,30 @@ export function SchemaPage({
     });
   }, [projectId, initialTable, loadProject]);
 
-  // Live auto-sync when the AI agent modifies schema, pending changes, or ADRs via MCP
+  // Live real-time auto-sync via SSE when the AI agent modifies schema, pending changes, or ADRs via MCP
   useEffect(() => {
+    // 1. Setup real-time Server-Sent Events (SSE)
+    let eventSource: EventSource | null = null;
+    try {
+      eventSource = new EventSource(`/api/projects/${encodeURIComponent(projectId)}/events`);
+      eventSource.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          if (data.type === 'sync') {
+            syncIfNeeded();
+          }
+        } catch {
+          // ignore
+        }
+      };
+    } catch {
+      // EventSource not supported
+    }
+
+    // 2. Passive relaxed fallback interval (15s) and window focus
     const interval = setInterval(() => {
       syncIfNeeded();
-    }, 2500);
+    }, 15000);
 
     const handleFocusOrVisibility = () => {
       if (document.visibilityState === 'visible') {
@@ -39,6 +58,9 @@ export function SchemaPage({
     document.addEventListener('visibilitychange', handleFocusOrVisibility);
 
     return () => {
+      if (eventSource) {
+        eventSource.close();
+      }
       clearInterval(interval);
       window.removeEventListener('focus', handleFocusOrVisibility);
       document.removeEventListener('visibilitychange', handleFocusOrVisibility);

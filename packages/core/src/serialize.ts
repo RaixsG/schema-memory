@@ -13,22 +13,25 @@ function formatColumnSettings(col: Column): string {
   if (col.notNull) parts.push('not null');
 
   if (col.default !== null && col.default !== undefined) {
-    if (col.default.startsWith('`') && col.default.endsWith('`')) {
-      parts.push(`default: ${col.default}`);
+    const raw = String(col.default).trim();
+    if (raw.startsWith('`') && raw.endsWith('`')) {
+      parts.push(`default: ${raw}`);
+    } else if (raw === 'true' || raw === 'false' || raw === 'null') {
+      parts.push(`default: ${raw}`);
     } else if (
-      col.default.includes('(') ||
-      col.default.toLowerCase() === 'now()'
+      raw.includes('(') ||
+      raw.toLowerCase() === 'now()'
     ) {
-      parts.push(`default: \`${col.default}\``);
+      parts.push(`default: \`${raw}\``);
     } else if (
-      col.default.startsWith("'") &&
-      col.default.endsWith("'")
+      raw.startsWith("'") &&
+      raw.endsWith("'")
     ) {
-      parts.push(`default: ${col.default}`);
-    } else if (!isNaN(Number(col.default))) {
-      parts.push(`default: ${col.default}`);
+      parts.push(`default: ${raw}`);
+    } else if (!isNaN(Number(raw)) && raw !== '') {
+      parts.push(`default: ${raw}`);
     } else {
-      parts.push(`default: '${col.default}'`);
+      parts.push(`default: '${raw}'`);
     }
   }
 
@@ -47,6 +50,7 @@ function formatIndex(idx: Index): string {
       : idx.columns[0] || '';
 
   const settings: string[] = [];
+  if (idx.pk) settings.push('pk');
   if (idx.unique) settings.push('unique');
   if (idx.name) settings.push(`name: '${idx.name}'`);
 

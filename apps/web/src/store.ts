@@ -15,6 +15,7 @@ interface SchemaStore {
   lastSyncedAt: number | null;
   selectedTable: string | null;
   selectedColumn: string | null;
+  selectedEdgeIndex: number | null;
   activeDrawer: 'pending' | 'decisions' | null;
   isAddModalOpen: boolean;
   isLoading: boolean;
@@ -29,6 +30,7 @@ interface SchemaStore {
   updateLayout: (tableName: string, pos: { x: number; y: number }) => void;
   setSelectedTable: (tableName: string | null) => void;
   setSelectedColumn: (colName: string | null) => void;
+  setSelectedEdgeIndex: (index: number | null) => void;
   setActiveDrawer: (drawer: 'pending' | 'decisions' | null) => void;
   setAddModalOpen: (open: boolean) => void;
 
@@ -40,6 +42,7 @@ interface SchemaStore {
   updateColumn: (tableName: string, oldColName: string, column: Column) => Promise<void>;
   removeColumn: (tableName: string, colName: string) => Promise<void>;
   addRef: (ref: Ref) => Promise<void>;
+  updateRef: (index: number, updated: Partial<Ref>) => Promise<void>;
   removeRef: (index: number) => Promise<void>;
 
   discardPending: () => Promise<void>;
@@ -70,6 +73,7 @@ export const useSchemaStore = create<SchemaStore>((set, get) => ({
   lastSyncedAt: null,
   selectedTable: null,
   selectedColumn: null,
+  selectedEdgeIndex: null,
   activeDrawer: null,
   isAddModalOpen: false,
   isLoading: false,
@@ -159,8 +163,11 @@ export const useSchemaStore = create<SchemaStore>((set, get) => ({
     }
   },
 
-  setSelectedTable: (tableName: string | null) => set({ selectedTable: tableName, selectedColumn: null }),
+  setSelectedTable: (tableName: string | null) =>
+    set({ selectedTable: tableName, selectedColumn: null, selectedEdgeIndex: null }),
   setSelectedColumn: (colName: string | null) => set({ selectedColumn: colName }),
+  setSelectedEdgeIndex: (index: number | null) =>
+    set({ selectedEdgeIndex: index, selectedTable: null, selectedColumn: null }),
   setActiveDrawer: (drawer) => set({ activeDrawer: drawer }),
   setAddModalOpen: (open) => set({ isAddModalOpen: open }),
 
@@ -317,15 +324,33 @@ export const useSchemaStore = create<SchemaStore>((set, get) => ({
     await updateStoreFingerprint(projectId, set);
   },
 
-  removeRef: async (index: number) => {
+  updateRef: async (index: number, updated: Partial<Ref>) => {
     const { model, projectId } = get();
+    if (!model || !projectId || !model.refs[index]) return;
+
+    const updatedRefs = model.refs.map((r, idx) =>
+      idx === index ? { ...r, ...updated } : r
+    );
+    const updatedModel = { ...model, refs: updatedRefs };
+    set({ model: updatedModel });
+
+    const { details } = await api.savePending(projectId, { model: updatedModel });
+    set({ pending: details });
+    await updateStoreFingerprint(projectId, set);
+  },
+
+  removeRef: async (index: number) => {
+    const { model, projectId, selectedEdgeIndex } = get();
     if (!model || !projectId) return;
 
     const updatedModel = {
       ...model,
       refs: model.refs.filter((_, idx) => idx !== index),
     };
-    set({ model: updatedModel });
+    set({
+      model: updatedModel,
+      selectedEdgeIndex: selectedEdgeIndex === index ? null : selectedEdgeIndex,
+    });
 
     const { details } = await api.savePending(projectId, { model: updatedModel });
     set({ pending: details });

@@ -264,4 +264,55 @@ describe('M1: DBML Core and Diff Engine', () => {
       expect(hashDbml(lf)).toBe(hashDbml(crlf));
     });
   });
+
+  describe('Boolean Defaults & Composite Primary Keys', () => {
+    it('serializes boolean and null defaults unquoted', () => {
+      const dbml = serializeDbml({
+        tables: [
+          {
+            name: 'settings',
+            schema: 'public',
+            columns: [
+              { name: 'id', type: 'int', pk: true, increment: false, unique: false, notNull: true, default: null, note: null },
+              { name: 'is_active', type: 'boolean', pk: false, increment: false, unique: false, notNull: true, default: 'true', note: null },
+              { name: 'is_verified', type: 'boolean', pk: false, increment: false, unique: false, notNull: false, default: 'false', note: null },
+            ],
+            indexes: [],
+            note: null,
+          },
+        ],
+        refs: [],
+        enums: [],
+      });
+
+      expect(dbml).toContain('is_active boolean [not null, default: true]');
+      expect(dbml).toContain('is_verified boolean [default: false]');
+      expect(dbml).not.toContain("default: 'true'");
+      expect(dbml).not.toContain("default: 'false'");
+    });
+
+    it('parses and serializes composite primary keys in indexes', () => {
+      const src = `
+Table user_teams {
+  user_id int
+  team_id int
+
+  Indexes {
+    (user_id, team_id) [pk]
+  }
+}
+      `.trim();
+
+      const parsed = parseSchema(src);
+      const userTeams = parsed.tables.find((t) => t.name === 'user_teams');
+      expect(userTeams).toBeDefined();
+      expect(userTeams?.indexes.length).toBe(1);
+      expect(userTeams?.indexes[0]?.pk).toBe(true);
+      expect(userTeams?.indexes[0]?.columns).toEqual(['user_id', 'team_id']);
+
+      const serialized = serializeDbml(parsed);
+      expect(serialized).toContain('(user_id, team_id) [pk]');
+    });
+  });
 });
+

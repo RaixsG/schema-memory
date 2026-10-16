@@ -15,7 +15,7 @@ function refKey(ref: Ref): string {
 }
 
 function indexKey(idx: Index): string {
-  return `${idx.columns.map((c) => c.toLowerCase()).join(',')}:${idx.unique ? 'u' : 'nu'}:${idx.name || ''}`;
+  return `${idx.columns.map((c) => c.toLowerCase()).join(',')}:${idx.pk ? 'pk' : 'npk'}:${idx.unique ? 'u' : 'nu'}:${idx.name || ''}`;
 }
 
 export function diffSchemas(

@@ -7,7 +7,7 @@ import {
 import { getPending, clearPending } from './pending.js';
 import { nextAdrId, renderAdrMarkdown, writeAdr } from './adr.js';
 import { readConfig } from './config.js';
-import { atomicWrite } from './fsx.js';
+import { atomicWrite, removeIfExists } from './fsx.js';
 import { validateDbml } from './dbml.js';
 
 export interface ConfirmResult {
@@ -157,12 +157,18 @@ export async function confirmChange(
   // Write ADR
   const adrPath = await writeAdr(projectPath, metadata, adrMarkdown);
 
-  // Write new schema.dbml
-  const schemaPath = resolve(projectPath, '.schema-memory', 'schema.dbml');
-  await atomicWrite(schemaPath, pending.change.proposedDbml);
+  try {
+    // Write new schema.dbml
+    const schemaPath = resolve(projectPath, '.schema-memory', 'schema.dbml');
+    await atomicWrite(schemaPath, pending.change.proposedDbml);
 
-  // Clear pending
-  await clearPending(projectPath);
+    // Clear pending
+    await clearPending(projectPath);
+  } catch (err) {
+    // Atomic rollback: remove newly written ADR if schema write fails
+    await removeIfExists(adrPath);
+    throw err;
+  }
 
   const engramSummary = buildEngramSummary({
     projectId,
