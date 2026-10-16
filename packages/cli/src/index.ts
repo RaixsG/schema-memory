@@ -16,10 +16,11 @@ program
   .version('0.1.0');
 
 program
-  .command('ui')
-  .description('Start the local web UI and API server')
+  .command('ui', { isDefault: true })
+  .description('Start the local web UI and API server (default command)')
   .option('-p, --port <port>', 'Server port (default: 4317)')
-  .option('--open', 'Open web browser automatically')
+  .option('--open', 'Open web browser automatically (default: true)')
+  .option('--no-open', 'Do not open web browser automatically')
   .action(async (opts) => {
     try {
       await uiCommand(opts);
@@ -30,13 +31,14 @@ program
   });
 
 program
-  .command('add <path>')
-  .description('Add and scaffold a project to schema-memory')
+  .command('add [path]')
+  .alias('init')
+  .description('Add and scaffold a project to schema-memory (defaults to current directory ".")')
   .option('-n, --name <name>', 'Custom project name')
   .option('-d, --dialect <dialect>', 'Database dialect (postgres, mysql, sqlite, etc.)')
   .option('-y, --yes', 'Skip confirmation prompt')
   .option('--project-skill', 'Install custom project skill in .agents/')
-  .action(async (targetPath, opts) => {
+  .action(async (targetPath = '.', opts) => {
     try {
       await addCommand(targetPath, opts);
     } catch (err: any) {
@@ -46,8 +48,9 @@ program
   });
 
 program
-  .command('remove <id>')
-  .description('Unregister a project from schema-memory')
+  .command('remove [id]')
+  .alias('rm')
+  .description('Unregister a project from schema-memory (defaults to current directory)')
   .option('--delete-data', 'Also delete the .schema-memory data directory')
   .option('-y, --yes', 'Skip confirmation prompt')
   .action(async (id, opts) => {
@@ -61,6 +64,7 @@ program
 
 program
   .command('status')
+  .aliases(['ls', 'list'])
   .description('Show status of registered projects, pending changes and ADRs')
   .option('-p, --project <project>', 'Filter by project ID or path')
   .action(async (opts) => {
@@ -86,8 +90,9 @@ program
 
 program
   .command('setup')
-  .description('Install or print the Antigravity plugin configuration')
+  .description('Install the Antigravity plugin and link global "sm" CLI command')
   .option('--print', 'Print plugin configuration without installing')
+  .option('--cli-only', 'Only link the global "sm" and "schema-memory" CLI commands in ~/.local/bin')
   .action(async (opts) => {
     try {
       await setupCommand(opts);

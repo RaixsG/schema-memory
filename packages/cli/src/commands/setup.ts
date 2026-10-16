@@ -1,12 +1,35 @@
-import { resolve } from 'node:path';
+import { resolve, dirname } from 'node:path';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { dirname } from 'node:path';
+import { chmod, rm, symlink } from 'node:fs/promises';
 import { atomicWrite, ensureDir } from '@schema-memory/core';
 
-export async function setupCommand(options: { print?: boolean }): Promise<void> {
+async function linkCliBinary(cliDistPath: string): Promise<string> {
+  await chmod(cliDistPath, 0o755);
+  const binDir = resolve(homedir(), '.local', 'bin');
+  await ensureDir(binDir);
+
+  for (const name of ['sm', 'schema-memory']) {
+    const linkPath = resolve(binDir, name);
+    await rm(linkPath, { force: true });
+    await symlink(cliDistPath, linkPath);
+  }
+  return binDir;
+}
+
+export async function setupCommand(options: {
+  print?: boolean;
+  cliOnly?: boolean;
+}): Promise<void> {
   const currentFile = fileURLToPath(import.meta.url);
   const cliDistPath = resolve(dirname(currentFile), '..', 'dist', 'index.js');
+
+  if (options.cliOnly) {
+    const binDir = await linkCliBinary(cliDistPath);
+    console.log(`\n✅ Global CLI linked at: ${binDir}/sm and ${binDir}/schema-memory`);
+    console.log('You can now run "sm", "sm init", "sm ls", "sm rm" from any directory.\n');
+    return;
+  }
 
   const pluginManifest = {
     name: 'schema-memory',
@@ -87,6 +110,8 @@ Before making or proposing any database schema change:
     rulesContent
   );
 
+  const binDir = await linkCliBinary(cliDistPath);
   console.log(`\n✅ Plugin installed at: ${targetDir}`);
+  console.log(`✅ Global CLI linked at: ${binDir}/sm`);
   console.log('Restart Antigravity to activate the plugin.\n');
 }

@@ -1,4 +1,4 @@
-import { removeProject } from '@schema-memory/core';
+import { removeProject, resolveProject } from '@schema-memory/core';
 import { createInterface } from 'node:readline';
 
 async function confirm(question: string): Promise<boolean> {
@@ -15,12 +15,18 @@ async function confirm(question: string): Promise<boolean> {
 }
 
 export async function removeCommand(
-  id: string,
+  id: string | undefined,
   options: { deleteData?: boolean; yes?: boolean }
 ): Promise<void> {
+  let targetId = id;
+  if (!targetId) {
+    const resolved = await resolveProject({ cwd: process.cwd() });
+    targetId = resolved.id;
+  }
+
   if (!options.yes) {
     const ok = await confirm(
-      `Remove schema-memory configuration for project "${id}"?${options.deleteData ? ' (WILL DELETE .schema-memory DATA)' : ''}`
+      `Remove schema-memory configuration for project "${targetId}"?${options.deleteData ? ' (WILL DELETE .schema-memory DATA)' : ''}`
     );
     if (!ok) {
       console.log('Operation aborted.');
@@ -28,8 +34,8 @@ export async function removeCommand(
     }
   }
 
-  const result = await removeProject(id, { deleteData: options.deleteData });
-  console.log(`\n✅ Project "${id}" unregistered.`);
+  const result = await removeProject(targetId, { deleteData: options.deleteData });
+  console.log(`\n✅ Project "${targetId}" unregistered.`);
   if (result.dataDeleted) {
     console.log(`🗑️  Data directory deleted.`);
   }

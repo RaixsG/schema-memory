@@ -8,7 +8,7 @@ export async function uiCommand(options: { port?: string; open?: boolean }): Pro
   console.log(`\n🚀 schema-memory UI running at: ${url}`);
   console.log(`Press Ctrl+C to stop.\n`);
 
-  if (options.open) {
+  if (options.open !== false) {
     const startCmd =
       process.platform === 'darwin'
         ? 'open'

@@ -149,13 +149,11 @@ pnpm build
 Tienes dos opciones según lo que necesites:
 
 #### Opción A: Modo App Completa (Uso Diario / Recomendado)
-Un solo comando levanta el servidor backend y sirve la interfaz web compilada directamente en el puerto 4317:
+Un solo comando levanta el servidor backend y abre automáticamente la interfaz web en **`http://127.0.0.1:4317`**:
 ```bash
 pnpm ui
-# o directamente con Node:
-node packages/cli/dist/index.js ui
+# (o `sm` si enlazaste el CLI global con `pnpm link-cli`)
 ```
-Abre automáticamente tu navegador en **`http://127.0.0.1:4317`**. No requiere proxies ni Vite.
 
 #### Opción B: Modo Desarrollo con Hot-Reload
 Si deseas modificar el código de la UI web o los estilos en tiempo real:
@@ -168,32 +166,27 @@ Este comando orquesta concurrentemente:
 
 ---
 
-## 5. Comandos CLI Principales
+## 5. Comandos CLI Simplificados (`pnpm` y `sm`)
 
-Puedes invocar el CLI directamente desde el paquete compilado o mediante `pnpm`:
-
+### 5.1 Activar comando corto global `sm` (Recomendado)
+Para poder usar `sm` desde **cualquier carpeta** de tu terminal sin escribir rutas largas:
 ```bash
-# Ver ayuda de comandos
-node packages/cli/dist/index.js --help
-
-# 1. Vincular un nuevo proyecto de cliente
-node packages/cli/dist/index.js add /Volumes/Externo/Jhardell/projects/mi-cliente
-
-# 2. Ver lista de proyectos vinculados y cambios pendientes
-node packages/cli/dist/index.js status
-
-# 3. Desvincular un proyecto
-node packages/cli/dist/index.js remove <id-o-ruta>
-
-# 4. Iniciar servidor MCP en stdio (para conectar con editores)
-node packages/cli/dist/index.js mcp
-
-# 5. Previsualizar archivos de configuración del plugin de Antigravity
-node packages/cli/dist/index.js setup --print
-
-# 6. Instalar el plugin globalmente en Antigravity (~/.gemini/config/plugins/schema-memory)
-node packages/cli/dist/index.js setup
+pnpm link-cli
 ```
+Esto crea el ejecutable `sm` (y `schema-memory`) en `~/.local/bin/`.
+
+### 5.2 Uso con `sm` (Desde cualquier carpeta) vs `pnpm` (Desde este repo)
+
+| Acción | Con `sm` global | Con `pnpm` desde este repo |
+| :--- | :--- | :--- |
+| **Abrir la interfaz web** | `sm` *(o `sm ui`)* | `pnpm ui` *(o `pnpm start`)* |
+| **Vincular carpeta actual** | `sm init` *(dentro del proyecto)* | — |
+| **Vincular proyecto por ruta** | `sm add /ruta/al/proyecto` | `pnpm sm add /ruta/al/proyecto` |
+| **Ver proyectos y estado** | `sm ls` *(o `sm status`)* | `pnpm status` *(o `pnpm sm ls`)* |
+| **Desvincular proyecto** | `sm rm` *(en la carpeta)* o `sm rm <id>` | `pnpm sm rm <id>` |
+| **Ver configuración del plugin** | `sm setup --print` | `pnpm sm setup --print` |
+| **Instalar plugin en Antigravity** | `sm setup` | `pnpm setup` |
+| **Ayuda de comandos** | `sm --help` | `pnpm sm --help` |
 
 ---
 
