@@ -1,33 +1,12 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
-import { streamSSE } from 'hono/streaming';
-import { securityMiddleware } from './security.js';
-import { listDirectories } from './fs-browser.js';
-import {
-  listProjects,
-  resolveProject,
-  readConfig,
-  readIfExists,
-  atomicWrite,
-  parseSchema,
-  planAddProject,
-  applyAddProject,
-  removeProject,
-  savePending,
-  getPending,
-  clearPending,
-  listAdrs,
-  readAdr,
-  AdrStatus,
-  Dialect,
-  computeProjectFingerprint,
-} from '@schema-memory/core';
+import { serveStatic } from '@hono/node-server/serve-static';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { existsSync } from 'node:fs';
-import { readdir } from 'node:fs/promises';
-import { createHash } from 'node:crypto';
-import { serveStatic } from '@hono/node-server/serve-static';
+import { securityMiddleware } from './security.js';
+import { projectsRouter } from './routes/projects.js';
+import { fsRouter } from './routes/fs.js';
 
 function findWebDistDir(): string | null {
   try {
@@ -49,13 +28,27 @@ function findWebDistDir(): string | null {
   return null;
 }
 
-export function createApp(): Hono {
+export function createRouter() {
+  return new Hono()
+    .get('/healthz', (c) => c.json({ status: 'ok', service: 'schema-memory-server' }))
+    .route('/api/projects', projectsRouter)
+    .route('/api/fs', fsRouter);
+}
+
+export type AppRouter = ReturnType<typeof createRouter>;
+
+export function createApp() {
   const app = new Hono();
 
   // Central error handler
   app.onError((err, c) => {
     console.error('Unhandled API error:', err);
-    return c.json({ error: err.message || 'Internal server error' }, 500);
+    return c.json(
+      {
+        error: err.message || 'Internal server error',
+      },
+      500
+    );
   });
 
   // Security & CORS
@@ -78,370 +71,10 @@ export function createApp(): Hono {
     })
   );
 
-  // Health check
-  app.get('/healthz', (c) => c.json({ status: 'ok', service: 'schema-memory-server' }));
+  // Mount modular route handlers
+  app.route('/', createRouter());
 
-  // --- API Routes ---
-
-  // 1. Projects listing with stats
-  app.get('/api/projects', async (c) => {
-    try {
-      const projects = await listProjects();
-      const list = await Promise.all(
-        projects.map(async (p) => {
-          const config = await readConfig(p.path);
-          const pending = await getPending(p.path);
-          const adrs = await listAdrs(p.path);
-          const unconfirmedAdrs = adrs.filter(
-            (a) => a.metadata.status !== 'confirmado'
-          ).length;
-
-          return {
-            id: p.id,
-            name: p.name,
-            path: p.path,
-            dialect: config?.dialect || 'postgres',
-            stack: config?.stack || [],
-            hasPending: pending !== null,
-            pendingStale: pending?.stale || false,
-            unconfirmedAdrs,
-            totalAdrs: adrs.length,
-          };
-        })
-      );
-      return c.json({ projects: list });
-    } catch (err: any) {
-      return c.json({ error: err.message }, 500);
-    }
-  });
-
-  // 2. Plan add project (Dry Run)
-  app.post('/api/projects/plan', async (c) => {
-    try {
-      const body = await c.req.json();
-      if (!body.path) {
-        return c.json({ error: 'Field "path" is required.' }, 400);
-      }
-      const plan = await planAddProject(body.path);
-      return c.json({ plan });
-    } catch (err: any) {
-      return c.json({ error: err.message }, 400);
-    }
-  });
-
-  // 3. Apply add project
-  app.post('/api/projects', async (c) => {
-    try {
-      const body = await c.req.json();
-      if (!body.path) {
-        return c.json({ error: 'Field "path" is required.' }, 400);
-      }
-      const plan = await planAddProject(body.path);
-      const config = await applyAddProject(plan, {
-        id: body.id,
-        name: body.name,
-        dialect: body.dialect as Dialect,
-        installProjectSkill: body.installProjectSkill,
-      });
-      return c.json({ project: config });
-    } catch (err: any) {
-      return c.json({ error: err.message }, 400);
-    }
-  });
-
-  // 4. Remove project
-  app.delete('/api/projects/:id', async (c) => {
-    try {
-      const id = c.req.param('id');
-      const deleteData = c.req.query('deleteData') === 'true';
-      const result = await removeProject(id, { deleteData });
-      return c.json({ removed: true, ...result });
-    } catch (err: any) {
-      return c.json({ error: err.message }, 400);
-    }
-  });
-
-  // 5. FS Directory Browser
-  app.get('/api/fs/list', async (c) => {
-    try {
-      const pathParam = c.req.query('path');
-      const result = await listDirectories(pathParam);
-      return c.json(result);
-    } catch (err: any) {
-      return c.json({ error: err.message }, 400);
-    }
-  });
-
-  // 6. Project Schema
-  app.get('/api/projects/:id/schema', async (c) => {
-    try {
-      const id = c.req.param('id');
-      const resolved = await resolveProject({ project: id });
-      const config = await readConfig(resolved.path);
-      const schemaPath = resolve(resolved.path, '.schema-memory', 'schema.dbml');
-      const dbml = (await readIfExists(schemaPath)) || '';
-      const model = parseSchema(dbml);
-
-      const pending = await getPending(resolved.path);
-      let pendingModel = null;
-      if (pending && !pending.stale && pending.change?.proposedDbml) {
-        try {
-          pendingModel = parseSchema(pending.change.proposedDbml);
-        } catch {
-          pendingModel = null;
-        }
-      }
-
-      const layoutPath = resolve(resolved.path, '.schema-memory', 'layout.json');
-      const layoutRaw = await readIfExists(layoutPath);
-      let layout: Record<string, { x: number; y: number }> = {};
-      if (layoutRaw) {
-        try {
-          layout = JSON.parse(layoutRaw);
-        } catch {
-          // ignore layout parse error
-        }
-      }
-
-      return c.json({
-        id: resolved.id,
-        name: resolved.name,
-        path: resolved.path,
-        config,
-        dbml,
-        model,
-        pendingModel,
-        layout,
-      });
-    } catch (err: any) {
-      return c.json({ error: err.message }, 400);
-    }
-  });
-
-  // 6b. Fast O(1) Sync Fingerprint for live agent updates
-  app.get('/api/projects/:id/sync', async (c) => {
-    try {
-      const id = c.req.param('id');
-      const resolved = await resolveProject({ project: id });
-      const schemaDir = resolve(resolved.path, '.schema-memory');
-      const changePath = resolve(schemaDir, 'pending', 'change.json');
-      const adrDir = resolve(schemaDir, 'adr');
-
-      const fingerprint = await computeProjectFingerprint(resolved.path);
-      const hasPending = existsSync(changePath);
-
-      let adrCount = 0;
-      try {
-        if (existsSync(adrDir)) {
-          const files = await readdir(adrDir);
-          adrCount = files.filter((f) => f.endsWith('.md')).length;
-        }
-      } catch {
-        adrCount = 0;
-      }
-
-      return c.json({
-        fingerprint,
-        hasPending,
-        adrCount,
-      });
-    } catch (err: any) {
-      return c.json({ error: err.message }, 400);
-    }
-  });
-
-  // 6c. Server-Sent Events (SSE) for Real-Time Reactivity
-  app.get('/api/projects/:id/events', async (c) => {
-    try {
-      const id = c.req.param('id');
-      const resolved = await resolveProject({ project: id });
-      const schemaDir = resolve(resolved.path, '.schema-memory');
-
-      return streamSSE(c, async (stream) => {
-        const initialFp = await computeProjectFingerprint(resolved.path);
-        await stream.writeSSE({
-          data: JSON.stringify({ type: 'connected', fingerprint: initialFp }),
-          event: 'message',
-        });
-
-        let lastFp = initialFp;
-        let debounceTimer: any = null;
-        let watcher: any = null;
-
-        try {
-          if (existsSync(schemaDir)) {
-            const { watch } = await import('node:fs');
-            watcher = watch(schemaDir, { recursive: true }, () => {
-              clearTimeout(debounceTimer);
-              debounceTimer = setTimeout(async () => {
-                try {
-                  const currentFp = await computeProjectFingerprint(resolved.path);
-                  if (currentFp !== lastFp) {
-                    lastFp = currentFp;
-                    await stream.writeSSE({
-                      data: JSON.stringify({ type: 'sync', fingerprint: currentFp }),
-                      event: 'message',
-                    });
-                  }
-                } catch {
-                  // ignore transient read errors
-                }
-              }, 150);
-            });
-          }
-        } catch {
-          // ignore watcher failure
-        }
-
-        const pingInterval = setInterval(async () => {
-          try {
-            await stream.writeSSE({
-              data: JSON.stringify({ type: 'ping' }),
-              event: 'ping',
-            });
-          } catch {
-            clearInterval(pingInterval);
-          }
-        }, 15000);
-
-        stream.onAbort(() => {
-          clearTimeout(debounceTimer);
-          clearInterval(pingInterval);
-          if (watcher) {
-            try {
-              watcher.close();
-            } catch {
-              // ignore
-            }
-          }
-        });
-      });
-    } catch (err: any) {
-      return c.json({ error: err.message }, 400);
-    }
-  });
-
-  // 7. Update Canvas Layout
-  app.put('/api/projects/:id/layout', async (c) => {
-    try {
-      const id = c.req.param('id');
-      const resolved = await resolveProject({ project: id });
-      const body = await c.req.json();
-      const layout = body.layout || {};
-      const layoutPath = resolve(resolved.path, '.schema-memory', 'layout.json');
-      await atomicWrite(layoutPath, JSON.stringify(layout, null, 2) + '\n');
-      return c.json({ saved: true });
-    } catch (err: any) {
-      return c.json({ error: err.message }, 400);
-    }
-  });
-
-  // 8. Pending Changes
-  app.get('/api/projects/:id/pending', async (c) => {
-    try {
-      const id = c.req.param('id');
-      const resolved = await resolveProject({ project: id });
-      const pending = await getPending(resolved.path);
-      return c.json({ pending });
-    } catch (err: any) {
-      return c.json({ error: err.message }, 400);
-    }
-  });
-
-  app.put('/api/projects/:id/pending', async (c) => {
-    try {
-      const id = c.req.param('id');
-      const resolved = await resolveProject({ project: id });
-      const body = await c.req.json();
-
-      const details = await savePending(resolved.path, {
-        proposedDbml: body.proposedDbml,
-        model: body.model,
-        source: 'ui',
-        note: body.note,
-      });
-      return c.json({ details });
-    } catch (err: any) {
-      return c.json({ error: err.message }, 400);
-    }
-  });
-
-  app.delete('/api/projects/:id/pending', async (c) => {
-    try {
-      const id = c.req.param('id');
-      const resolved = await resolveProject({ project: id });
-      await clearPending(resolved.path);
-      return c.json({ cleared: true });
-    } catch (err: any) {
-      return c.json({ error: err.message }, 400);
-    }
-  });
-
-  // 9. ADRs Timeline
-  app.get('/api/projects/:id/adrs', async (c) => {
-    try {
-      const id = c.req.param('id');
-      const table = c.req.query('table');
-      const column = c.req.query('column');
-      const status = c.req.query('status') as AdrStatus | undefined;
-
-      const resolved = await resolveProject({ project: id });
-      const adrs = await listAdrs(resolved.path, { table, column, status });
-
-      return c.json({
-        adrs: adrs.map((a) => ({
-          metadata: a.metadata,
-          context: a.context,
-          decision: a.decision,
-          alternatives: a.alternatives,
-          consequences: a.consequences,
-          diffText: a.diffText,
-        })),
-      });
-    } catch (err: any) {
-      return c.json({ error: err.message }, 400);
-    }
-  });
-
-  app.get('/api/projects/:id/adrs/:adrId', async (c) => {
-    try {
-      const id = c.req.param('id');
-      const adrId = c.req.param('adrId');
-      const resolved = await resolveProject({ project: id });
-      const adr = await readAdr(resolved.path, adrId);
-      if (!adr) {
-        return c.json({ error: `ADR "${adrId}" not found.` }, 404);
-      }
-      return c.json({ adr });
-    } catch (err: any) {
-      return c.json({ error: err.message }, 400);
-    }
-  });
-
-  // 10. Bootstrap Prompt for AI agent
-  app.get('/api/projects/:id/bootstrap-prompt', async (c) => {
-    try {
-      const id = c.req.param('id');
-      const resolved = await resolveProject({ project: id });
-      const config = await readConfig(resolved.path);
-      const stackList = config?.stack.join(', ') || 'generic';
-
-      const prompt = [
-        `Hola! Este proyecto "${resolved.name}" (id: "${resolved.id}", ruta: "${resolved.path}") utiliza schema-memory.`,
-        `Stack detectado: ${stackList}.`,
-        `1. Inspecciona ÚNICAMENTE los modelos y archivos de base de datos dentro de este proyecto ("${resolved.path}").`,
-        `2. Genera el esquema canónico inicial en DBML llamando a la herramienta MCP \`import_schema\` con \`project: "${resolved.id}"\`.`,
-        `3. Crea también los ADRs iniciales con \`status="reconstruido"\` para documentar las decisiones observadas.`,
-        `IMPORTANTE: Interactúa con schema-memory ÚNICAMENTE mediante sus herramientas MCP (\`schema-memory\` / \`schema-memory-mcp\`). NUNCA busques, leas ni analices el repositorio de código fuente de schema-memory. Si las herramientas MCP (\`import_schema\`, \`get_schema\`, etc.) no están activas en tu sesión actual, detente de inmediato sin buscar en el disco y pídeme ejecutar \`sm setup\` (o \`pnpm sm setup\`) y recargar el agente.`,
-      ].join('\n');
-
-      return c.json({ prompt });
-    } catch (err: any) {
-      return c.json({ error: err.message }, 400);
-    }
-  });
-
-  // 11. Static files & SPA fallback for web UI
+  // Static files & SPA fallback for web UI
   const webDist = findWebDistDir();
   if (webDist) {
     app.use('/assets/*', serveStatic({ root: webDist }));
@@ -450,3 +83,5 @@ export function createApp(): Hono {
 
   return app;
 }
+
+export type AppInstance = ReturnType<typeof createApp>;
