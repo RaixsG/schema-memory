@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { SchemaModel, Table, Column, Ref, PendingDetails } from './types';
+import { SchemaModel, Table, Column, Ref, PendingDetails, AdrItem } from './types';
 import { api } from './api';
 
 interface SchemaStore {
@@ -10,6 +10,9 @@ interface SchemaStore {
   model: SchemaModel | null;
   layout: Record<string, { x: number; y: number }>;
   pending: PendingDetails | null;
+  adrs: AdrItem[];
+  lastFingerprint: string | null;
+  lastSyncedAt: number | null;
   selectedTable: string | null;
   selectedColumn: string | null;
   activeDrawer: 'pending' | 'decisions' | null;
@@ -18,7 +21,11 @@ interface SchemaStore {
   error: string | null;
 
   // Actions
-  loadProject: (id: string) => Promise<void>;
+  loadProject: (
+    id: string,
+    opts?: { initialTable?: string | null; silent?: boolean }
+  ) => Promise<void>;
+  syncIfNeeded: () => Promise<boolean>;
   updateLayout: (tableName: string, pos: { x: number; y: number }) => void;
   setSelectedTable: (tableName: string | null) => void;
   setSelectedColumn: (colName: string | null) => void;
@@ -41,6 +48,15 @@ interface SchemaStore {
 
 let saveTimer: any = null;
 
+async function updateStoreFingerprint(projectId: string, set: any) {
+  try {
+    const syncData = await api.getProjectSync(projectId);
+    set({ lastFingerprint: syncData.fingerprint });
+  } catch {
+    // ignore
+  }
+}
+
 export const useSchemaStore = create<SchemaStore>((set, get) => ({
   projectId: null,
   projectName: '',
@@ -49,6 +65,9 @@ export const useSchemaStore = create<SchemaStore>((set, get) => ({
   model: null,
   layout: {},
   pending: null,
+  adrs: [],
+  lastFingerprint: null,
+  lastSyncedAt: null,
   selectedTable: null,
   selectedColumn: null,
   activeDrawer: null,
@@ -56,25 +75,75 @@ export const useSchemaStore = create<SchemaStore>((set, get) => ({
   isLoading: false,
   error: null,
 
-  loadProject: async (id: string) => {
-    set({ isLoading: true, error: null, projectId: id });
+  loadProject: async (id: string, opts?: { initialTable?: string | null; silent?: boolean }) => {
+    const isSilent = opts?.silent === true;
+    const prevProjectId = get().projectId;
+    const prevSelectedTable = get().selectedTable;
+
+    if (!isSilent) {
+      set({ isLoading: true, error: null, projectId: id });
+    }
     try {
-      const data = await api.getProjectSchema(id);
-      const pendingData = await api.getPending(id);
+      const [data, pendingData, adrsData, syncData] = await Promise.all([
+        api.getProjectSchema(id),
+        api.getPending(id),
+        api.getAdrs(id),
+        api.getProjectSync(id),
+      ]);
+
+      const workingSource = data.pendingModel || data.model;
+      const workingModel: SchemaModel = JSON.parse(JSON.stringify(workingSource));
+
+      const preferredTable =
+        opts?.initialTable !== undefined
+          ? opts.initialTable
+          : prevProjectId === id
+            ? prevSelectedTable
+            : null;
+
+      const resolvedTable =
+        preferredTable && workingModel.tables.some((t) => t.name === preferredTable)
+          ? preferredTable
+          : workingModel.tables[0]?.name || null;
+
       set({
         projectId: data.id,
         projectName: data.name,
         projectDialect: data.config?.dialect || 'postgres',
         baseModel: data.model,
-        model: JSON.parse(JSON.stringify(data.model)),
+        model: workingModel,
         layout: data.layout || {},
         pending: pendingData.pending,
-        selectedTable: data.model.tables[0]?.name || null,
+        adrs: adrsData.adrs || [],
+        lastFingerprint: syncData.fingerprint,
+        selectedTable: resolvedTable,
         isLoading: false,
+        error: null,
       });
     } catch (err: any) {
-      set({ error: err.message, isLoading: false });
+      if (!isSilent) {
+        set({ error: err.message, isLoading: false });
+      }
     }
+  },
+
+  syncIfNeeded: async () => {
+    const { projectId, lastFingerprint, isLoading } = get();
+    if (!projectId || isLoading) return false;
+    try {
+      const syncData = await api.getProjectSync(projectId);
+      if (lastFingerprint && syncData.fingerprint !== lastFingerprint) {
+        await get().loadProject(projectId, { silent: true });
+        set({ lastSyncedAt: Date.now() });
+        return true;
+      }
+      if (!lastFingerprint) {
+        set({ lastFingerprint: syncData.fingerprint });
+      }
+    } catch {
+      // ignore transient network error
+    }
+    return false;
   },
 
   updateLayout: (tableName: string, pos: { x: number; y: number }) => {
@@ -123,6 +192,7 @@ export const useSchemaStore = create<SchemaStore>((set, get) => ({
     const { details } = await api.savePending(projectId, { model: updatedModel });
     await api.updateLayout(projectId, updatedLayout);
     set({ pending: details });
+    await updateStoreFingerprint(projectId, set);
   },
 
   updateTable: async (oldName: string, newName: string, note?: string) => {
@@ -154,6 +224,7 @@ export const useSchemaStore = create<SchemaStore>((set, get) => ({
     const { details } = await api.savePending(projectId, { model: updatedModel });
     await api.updateLayout(projectId, updatedLayout);
     set({ pending: details });
+    await updateStoreFingerprint(projectId, set);
   },
 
   removeTable: async (name: string) => {
@@ -177,6 +248,7 @@ export const useSchemaStore = create<SchemaStore>((set, get) => ({
     const { details } = await api.savePending(projectId, { model: updatedModel });
     await api.updateLayout(projectId, updatedLayout);
     set({ pending: details });
+    await updateStoreFingerprint(projectId, set);
   },
 
   addColumn: async (tableName: string, column: Column) => {
@@ -193,6 +265,7 @@ export const useSchemaStore = create<SchemaStore>((set, get) => ({
 
     const { details } = await api.savePending(projectId, { model: updatedModel });
     set({ pending: details });
+    await updateStoreFingerprint(projectId, set);
   },
 
   updateColumn: async (tableName: string, oldColName: string, column: Column) => {
@@ -212,6 +285,7 @@ export const useSchemaStore = create<SchemaStore>((set, get) => ({
 
     const { details } = await api.savePending(projectId, { model: updatedModel });
     set({ pending: details });
+    await updateStoreFingerprint(projectId, set);
   },
 
   removeColumn: async (tableName: string, colName: string) => {
@@ -228,6 +302,7 @@ export const useSchemaStore = create<SchemaStore>((set, get) => ({
 
     const { details } = await api.savePending(projectId, { model: updatedModel });
     set({ pending: details });
+    await updateStoreFingerprint(projectId, set);
   },
 
   addRef: async (ref: Ref) => {
@@ -239,6 +314,7 @@ export const useSchemaStore = create<SchemaStore>((set, get) => ({
 
     const { details } = await api.savePending(projectId, { model: updatedModel });
     set({ pending: details });
+    await updateStoreFingerprint(projectId, set);
   },
 
   removeRef: async (index: number) => {
@@ -253,6 +329,7 @@ export const useSchemaStore = create<SchemaStore>((set, get) => ({
 
     const { details } = await api.savePending(projectId, { model: updatedModel });
     set({ pending: details });
+    await updateStoreFingerprint(projectId, set);
   },
 
   discardPending: async () => {
@@ -267,6 +344,7 @@ export const useSchemaStore = create<SchemaStore>((set, get) => ({
       model: JSON.parse(JSON.stringify(data.model)),
       pending: null,
     });
+    await updateStoreFingerprint(projectId, set);
   },
 
   refreshPending: async () => {
@@ -274,5 +352,6 @@ export const useSchemaStore = create<SchemaStore>((set, get) => ({
     if (!projectId) return;
     const { pending } = await api.getPending(projectId);
     set({ pending });
+    await updateStoreFingerprint(projectId, set);
   },
 }));

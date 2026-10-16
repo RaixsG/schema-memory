@@ -107,6 +107,15 @@ describe('M5: Server REST API and Security', () => {
       });
       expect(layoutRes.status).toBe(200);
 
+      // 6b. Sync fingerprint before pending change
+      const syncRes1 = await app.request('/api/projects/rest-project/sync', {
+        headers: localHeaders,
+      });
+      expect(syncRes1.status).toBe(200);
+      const syncData1 = await syncRes1.json();
+      expect(typeof syncData1.fingerprint).toBe('string');
+      expect(syncData1.hasPending).toBe(false);
+
       // 7. Put pending change
       const pendingDbml = 'Table users {\n  id int [pk]\n  name varchar\n}\n';
       const putPendingRes = await app.request(
@@ -120,6 +129,14 @@ describe('M5: Server REST API and Security', () => {
       expect(putPendingRes.status).toBe(200);
       const putPendingData = await putPendingRes.json();
       expect(putPendingData.details.changes.length).toBe(1);
+
+      // 7b. Sync fingerprint after pending change should differ
+      const syncRes2 = await app.request('/api/projects/rest-project/sync', {
+        headers: localHeaders,
+      });
+      const syncData2 = await syncRes2.json();
+      expect(syncData2.hasPending).toBe(true);
+      expect(syncData2.fingerprint).not.toBe(syncData1.fingerprint);
 
       // 8. Get pending change
       const getPendingRes = await app.request(

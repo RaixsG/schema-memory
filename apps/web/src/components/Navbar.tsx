@@ -1,14 +1,26 @@
+import { useEffect, useState } from 'react';
 import { useSchemaStore } from '../store';
-import { Database, BookOpen, Clock, Plus, AlertCircle } from 'lucide-react';
+import { Database, BookOpen, Clock, Plus, AlertCircle, RefreshCw } from 'lucide-react';
 
 export function Navbar({ onGoHome }: { onGoHome: () => void }) {
   const projectId = useSchemaStore((s) => s.projectId);
   const projectName = useSchemaStore((s) => s.projectName);
   const projectDialect = useSchemaStore((s) => s.projectDialect);
   const pending = useSchemaStore((s) => s.pending);
+  const adrs = useSchemaStore((s) => s.adrs);
+  const lastSyncedAt = useSchemaStore((s) => s.lastSyncedAt);
   const activeDrawer = useSchemaStore((s) => s.activeDrawer);
   const setActiveDrawer = useSchemaStore((s) => s.setActiveDrawer);
   const setAddModalOpen = useSchemaStore((s) => s.setAddModalOpen);
+
+  const [justSynced, setJustSynced] = useState(false);
+
+  useEffect(() => {
+    if (!lastSyncedAt) return;
+    setJustSynced(true);
+    const timer = setTimeout(() => setJustSynced(false), 4500);
+    return () => clearTimeout(timer);
+  }, [lastSyncedAt]);
 
   return (
     <header
@@ -54,6 +66,14 @@ export function Navbar({ onGoHome }: { onGoHome: () => void }) {
               {projectName}
             </span>
             <span className="badge badge-gray">{projectDialect}</span>
+            {justSynced && (
+              <span
+                className="badge badge-green"
+                style={{ display: 'flex', alignItems: 'center', gap: 4 }}
+              >
+                <RefreshCw size={11} /> Sincronizado con agente
+              </span>
+            )}
           </div>
         )}
       </div>
@@ -80,6 +100,20 @@ export function Navbar({ onGoHome }: { onGoHome: () => void }) {
               style={{ fontSize: 12, padding: '5px 10px' }}
             >
               <BookOpen size={14} /> Decisiones
+              {adrs.length > 0 && (
+                <span
+                  style={{
+                    backgroundColor: 'var(--bg-tertiary)',
+                    color: 'var(--text-primary)',
+                    borderRadius: 999,
+                    padding: '1px 6px',
+                    fontSize: 10,
+                    fontWeight: 700,
+                  }}
+                >
+                  {adrs.length}
+                </span>
+              )}
             </button>
 
             <button

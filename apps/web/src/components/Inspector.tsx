@@ -1,12 +1,25 @@
 import { useState } from 'react';
 import { useSchemaStore } from '../store';
 import { Column } from '../types';
-import { Plus, Trash2, Edit3, X, Check, Database } from 'lucide-react';
+import {
+  Plus,
+  Trash2,
+  Edit3,
+  X,
+  Check,
+  Database,
+  BookOpen,
+  ChevronDown,
+  ChevronRight,
+  ExternalLink,
+} from 'lucide-react';
 
 export function Inspector() {
   const model = useSchemaStore((s) => s.model);
+  const adrs = useSchemaStore((s) => s.adrs);
   const selectedTable = useSchemaStore((s) => s.selectedTable);
   const setSelectedTable = useSchemaStore((s) => s.setSelectedTable);
+  const setActiveDrawer = useSchemaStore((s) => s.setActiveDrawer);
   const addTable = useSchemaStore((s) => s.addTable);
   const updateTable = useSchemaStore((s) => s.updateTable);
   const removeTable = useSchemaStore((s) => s.removeTable);
@@ -26,7 +39,20 @@ export function Inspector() {
   const [colUnique, setColUnique] = useState(false);
   const [colNotNull, setColNotNull] = useState(false);
 
+  const [expandedAdrId, setExpandedAdrId] = useState<string | null>(null);
+
   const table = model?.tables.find((t) => t.name === selectedTable);
+
+  // Filter ADRs affecting the currently selected table (sorted newest first)
+  const tableAdrs = table
+    ? [...adrs]
+        .filter((adr) =>
+          adr.metadata.affects.some(
+            (aff) => aff === table.name || aff.startsWith(`${table.name}.`)
+          )
+        )
+        .sort((a, b) => b.metadata.id.localeCompare(a.metadata.id))
+    : [];
 
   const handleStartEditTable = () => {
     if (!table) return;
@@ -70,7 +96,7 @@ export function Inspector() {
   return (
     <div
       style={{
-        width: 320,
+        width: 340,
         height: '100%',
         backgroundColor: 'var(--bg-secondary)',
         borderLeft: '1px solid var(--border)',
@@ -94,7 +120,7 @@ export function Inspector() {
         {table && (
           <button
             onClick={() => setSelectedTable(null)}
-            title="Deselect table"
+            title="Deseleccionar tabla"
             style={{ color: 'var(--text-muted)' }}
           >
             <X size={14} />
@@ -102,7 +128,7 @@ export function Inspector() {
         )}
       </div>
 
-      <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 18 }}>
         {table ? (
           <>
             {/* Table Header Details */}
@@ -170,14 +196,14 @@ export function Inspector() {
                 }}
               >
                 <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-muted)' }}>
-                  COLUMNS ({table.columns.length})
+                  COLUMNAS ({table.columns.length})
                 </span>
                 <button
                   className="btn btn-secondary"
                   style={{ padding: '3px 8px', fontSize: 11 }}
                   onClick={() => setIsAddingCol(true)}
                 >
-                  <Plus size={12} /> Add
+                  <Plus size={12} /> Añadir
                 </button>
               </div>
 
@@ -287,15 +313,185 @@ export function Inspector() {
                 ))}
               </div>
             </div>
+
+            {/* Table Recent Decisions (ADRs) */}
+            <div style={{ borderTop: '1px solid var(--border)', paddingTop: 14 }}>
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  marginBottom: 8,
+                }}
+              >
+                <span
+                  style={{
+                    fontSize: 12,
+                    fontWeight: 600,
+                    color: 'var(--text-muted)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 6,
+                  }}
+                >
+                  <BookOpen size={13} color="var(--accent)" />
+                  DECISIONES ({tableAdrs.length})
+                </span>
+                {tableAdrs.length > 0 && (
+                  <button
+                    onClick={() => setActiveDrawer('decisions')}
+                    style={{
+                      fontSize: 11,
+                      color: 'var(--accent)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 3,
+                    }}
+                    title="Abrir panel completo de decisiones"
+                  >
+                    Ver todas <ExternalLink size={11} />
+                  </button>
+                )}
+              </div>
+
+              {tableAdrs.length === 0 ? (
+                <div
+                  style={{
+                    padding: '10px 12px',
+                    backgroundColor: 'var(--bg-tertiary)',
+                    borderRadius: 6,
+                    border: '1px dashed var(--border)',
+                    fontSize: 12,
+                    color: 'var(--text-muted)',
+                  }}
+                >
+                  Sin decisiones registradas aún para <strong>{table.name}</strong>.
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {tableAdrs.map((adr, idx) => {
+                    // Expand the latest decision by default if user hasn't toggled any
+                    const isExpanded =
+                      expandedAdrId === adr.metadata.id ||
+                      (expandedAdrId === null && idx === 0);
+                    const tableSpecificCols = adr.metadata.affects
+                      .filter((a) => a.startsWith(`${table.name}.`))
+                      .map((a) => a.slice(table.name.length + 1));
+
+                    return (
+                      <div
+                        key={adr.metadata.id}
+                        style={{
+                          backgroundColor: 'var(--bg-tertiary)',
+                          border: '1px solid var(--border)',
+                          borderRadius: 6,
+                          overflow: 'hidden',
+                        }}
+                      >
+                        <div
+                          onClick={() =>
+                            setExpandedAdrId(
+                              isExpanded ? '__none__' : adr.metadata.id
+                            )
+                          }
+                          style={{
+                            padding: '8px 10px',
+                            display: 'flex',
+                            alignItems: 'flex-start',
+                            justifyContent: 'space-between',
+                            gap: 6,
+                            cursor: 'pointer',
+                          }}
+                        >
+                          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6 }}>
+                            <span style={{ marginTop: 2, color: 'var(--text-muted)' }}>
+                              {isExpanded ? (
+                                <ChevronDown size={13} />
+                              ) : (
+                                <ChevronRight size={13} />
+                              )}
+                            </span>
+                            <div>
+                              <div style={{ fontWeight: 600, fontSize: 12, lineHeight: 1.3 }}>
+                                ADR-{adr.metadata.id}: {adr.metadata.title}
+                              </div>
+                              <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>
+                                {adr.metadata.date}
+                                {tableSpecificCols.length > 0 &&
+                                  ` • Cols: ${tableSpecificCols.join(', ')}`}
+                              </div>
+                            </div>
+                          </div>
+                          <span
+                            className={`badge ${
+                              adr.metadata.status === 'confirmado'
+                                ? 'badge-green'
+                                : 'badge-purple'
+                            }`}
+                            style={{ flexShrink: 0, fontSize: 10 }}
+                          >
+                            {adr.metadata.status}
+                          </span>
+                        </div>
+
+                        {isExpanded && (
+                          <div
+                            style={{
+                              padding: '8px 10px',
+                              borderTop: '1px solid var(--border)',
+                              backgroundColor: 'var(--bg-primary)',
+                              fontSize: 11,
+                              display: 'flex',
+                              flexDirection: 'column',
+                              gap: 6,
+                              lineHeight: 1.45,
+                            }}
+                          >
+                            <div>
+                              <strong style={{ color: 'var(--text-muted)' }}>Decisión:</strong>
+                              <p style={{ marginTop: 2, color: 'var(--text-primary)' }}>
+                                {adr.decision}
+                              </p>
+                            </div>
+                            {adr.context && (
+                              <div>
+                                <strong style={{ color: 'var(--text-muted)' }}>Contexto:</strong>
+                                <p style={{ marginTop: 2, color: 'var(--text-secondary)' }}>
+                                  {adr.context}
+                                </p>
+                              </div>
+                            )}
+                            {adr.alternatives.length > 0 && (
+                              <div>
+                                <strong style={{ color: 'var(--text-muted)' }}>
+                                  Alternativas descartadas:
+                                </strong>
+                                <ul style={{ marginTop: 2, paddingLeft: 14, color: 'var(--text-secondary)' }}>
+                                  {adr.alternatives.map((alt, i) => (
+                                    <li key={i}>
+                                      <strong>{alt.option}:</strong> {alt.whyDiscarded}
+                                    </li>
+                                  ))}
+                                </ul>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
           </>
         ) : (
           /* When no table is selected: Show Add Table Form */
           <div>
             <h4 style={{ fontSize: 14, fontWeight: 600, marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
-              <Database size={15} color="var(--accent)" /> Create New Table
+              <Database size={15} color="var(--accent)" /> Crear Nueva Tabla
             </h4>
             <p style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 12 }}>
-              Select a table on the canvas to inspect its fields, or add a new table to the schema.
+              Selecciona una tabla en el canvas para ver sus columnas y últimas decisiones, o crea una tabla nueva.
             </p>
             <form onSubmit={handleAddTableSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               <input
@@ -305,7 +501,7 @@ export function Inspector() {
                 required
               />
               <button type="submit" className="btn btn-primary">
-                <Plus size={14} /> Add Table
+                <Plus size={14} /> Añadir Tabla
               </button>
             </form>
           </div>

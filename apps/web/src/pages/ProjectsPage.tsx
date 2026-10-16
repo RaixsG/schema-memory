@@ -9,20 +9,27 @@ export function ProjectsPage({ onSelectProject }: { onSelectProject: (id: string
   const [loading, setLoading] = useState(true);
   const setAddModalOpen = useSchemaStore((s) => s.setAddModalOpen);
 
-  const fetchProjects = async () => {
-    setLoading(true);
+  const fetchProjects = async (silent = false) => {
+    if (!silent) setLoading(true);
     try {
       const data = await api.getProjects();
       setProjects(data.projects);
     } catch (err) {
       console.error(err);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   };
 
   useEffect(() => {
-    fetchProjects();
+    fetchProjects(false);
+    const interval = setInterval(() => fetchProjects(true), 4000);
+    const onFocus = () => fetchProjects(true);
+    window.addEventListener('focus', onFocus);
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('focus', onFocus);
+    };
   }, []);
 
   const handleRemove = async (e: React.MouseEvent, id: string) => {

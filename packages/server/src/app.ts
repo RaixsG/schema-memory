@@ -23,6 +23,7 @@ import {
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { existsSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { serveStatic } from '@hono/node-server/serve-static';
 
 function findWebDistDir(): string | null {
@@ -172,6 +173,16 @@ export function createApp(): Hono {
       const dbml = (await readIfExists(schemaPath)) || '';
       const model = parseSchema(dbml);
 
+      const pending = await getPending(resolved.path);
+      let pendingModel = null;
+      if (pending && !pending.stale && pending.change?.proposedDbml) {
+        try {
+          pendingModel = parseSchema(pending.change.proposedDbml);
+        } catch {
+          pendingModel = null;
+        }
+      }
+
       const layoutPath = resolve(resolved.path, '.schema-memory', 'layout.json');
       const layoutRaw = await readIfExists(layoutPath);
       let layout: Record<string, { x: number; y: number }> = {};
@@ -190,7 +201,39 @@ export function createApp(): Hono {
         config,
         dbml,
         model,
+        pendingModel,
         layout,
+      });
+    } catch (err: any) {
+      return c.json({ error: err.message }, 400);
+    }
+  });
+
+  // 6b. Lightweight Sync Fingerprint for live agent updates
+  app.get('/api/projects/:id/sync', async (c) => {
+    try {
+      const id = c.req.param('id');
+      const resolved = await resolveProject({ project: id });
+      const schemaPath = resolve(resolved.path, '.schema-memory', 'schema.dbml');
+      const dbml = (await readIfExists(schemaPath)) || '';
+      const pending = await getPending(resolved.path);
+      const adrs = await listAdrs(resolved.path);
+
+      const payload = JSON.stringify({
+        dbml,
+        pendingUpdatedAt: pending?.change?.updatedAt || null,
+        pendingProposed: pending?.change?.proposedDbml || null,
+        pendingDraftTitle: pending?.draft?.title || null,
+        pendingDraftDecision: pending?.draft?.decision || null,
+        adrsSig: adrs.map((a) => `${a.metadata.id}:${a.metadata.status}:${a.metadata.title}`),
+      });
+
+      const fingerprint = createHash('sha1').update(payload).digest('hex');
+
+      return c.json({
+        fingerprint,
+        hasPending: pending !== null,
+        adrCount: adrs.length,
       });
     } catch (err: any) {
       return c.json({ error: err.message }, 400);

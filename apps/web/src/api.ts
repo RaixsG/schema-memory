@@ -62,8 +62,16 @@ export const api = {
       config: any;
       dbml: string;
       model: SchemaModel;
+      pendingModel?: SchemaModel | null;
       layout: Record<string, { x: number; y: number }>;
     }>(`/api/projects/${id}/schema`),
+
+  getProjectSync: (id: string) =>
+    req<{
+      fingerprint: string;
+      hasPending: boolean;
+      adrCount: number;
+    }>(`/api/projects/${id}/sync`),
 
   updateLayout: (id: string, layout: Record<string, { x: number; y: number }>) =>
     req<{ saved: boolean }>(`/api/projects/${id}/layout`, {
