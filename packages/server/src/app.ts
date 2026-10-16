@@ -303,11 +303,12 @@ export function createApp(): Hono {
       const stackList = config?.stack.join(', ') || 'generic';
 
       const prompt = [
-        `Hola! Este proyecto "${resolved.name}" (id: ${resolved.id}) utiliza schema-memory.`,
+        `Hola! Este proyecto "${resolved.name}" (id: "${resolved.id}", ruta: "${resolved.path}") utiliza schema-memory.`,
         `Stack detectado: ${stackList}.`,
-        'Por favor, inspecciona los modelos y archivos de base de datos existentes en el proyecto,',
-        'y genera el esquema canónico inicial llamando a la herramienta MCP "import_schema".',
-        'Crea también los ADRs iniciales con status="reconstruido" para documentar las decisiones observadas.',
+        `1. Inspecciona ÚNICAMENTE los modelos y archivos de base de datos dentro de este proyecto ("${resolved.path}").`,
+        `2. Genera el esquema canónico inicial en DBML llamando a la herramienta MCP \`import_schema\` con \`project: "${resolved.id}"\`.`,
+        `3. Crea también los ADRs iniciales con \`status="reconstruido"\` para documentar las decisiones observadas.`,
+        `IMPORTANTE: Interactúa con schema-memory ÚNICAMENTE mediante sus herramientas MCP (\`schema-memory\` / \`schema-memory-mcp\`). NUNCA busques, leas ni analices el repositorio de código fuente de schema-memory. Si las herramientas MCP (\`import_schema\`, \`get_schema\`, etc.) no están activas en tu sesión actual, detente de inmediato sin buscar en el disco y pídeme ejecutar \`sm setup\` (o \`pnpm sm setup\`) y recargar el agente.`,
       ].join('\n');
 
       return c.json({ prompt });

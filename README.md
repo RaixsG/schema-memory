@@ -184,20 +184,26 @@ Esto crea el ejecutable `sm` (y `schema-memory`) en `~/.local/bin/`.
 | **Vincular proyecto por ruta** | `sm add /ruta/al/proyecto` | `pnpm sm add /ruta/al/proyecto` |
 | **Ver proyectos y estado** | `sm ls` *(o `sm status`)* | `pnpm status` *(o `pnpm sm ls`)* |
 | **Desvincular proyecto** | `sm rm` *(en la carpeta)* o `sm rm <id>` | `pnpm sm rm <id>` |
-| **Configuración Global Multi-Agente** | `sm setup` | `pnpm setup` |
+| **Configuración Global Multi-Agente** | `sm setup` | `pnpm sm setup` *(o `pnpm run setup`)* |
+| **Diagnóstico de salud (`doctor`)** | `sm doctor` | `pnpm sm doctor` *(o `pnpm run doctor`)* |
 | **Configurar solo OpenCode** | `sm setup --target opencode` | `pnpm sm setup --target opencode` |
 | **Configurar solo Antigravity** | `sm setup --target antigravity` | `pnpm sm setup --target antigravity` |
 | **Previsualizar configuración** | `sm setup --print` | `pnpm sm setup --print` |
 | **Ayuda de comandos** | `sm --help` | `pnpm sm --help` |
 
-### 5.3 ¿Qué instala `sm setup` (`pnpm setup`)?
+> [!NOTE]
+> Nota sobre `pnpm`: los comandos `pnpm setup` y `pnpm doctor` (sin `sm` ni `run`) son subcomandos internos del propio gestor `pnpm`. Usa siempre **`sm setup` / `sm doctor`** o **`pnpm sm setup` / `pnpm sm doctor`**.
+
+### 5.3 ¿Qué instala `sm setup` (`pnpm sm setup`)?
 `schema-memory` es **100% agnóstico de agente**. Al ejecutar `sm setup` (por defecto `--target all`), configura de manera no destructiva (haciendo *merge* sin borrar tu configuración previa):
 1. **Estándar Abierto Global (`~/.agents/skills/schema-memory/SKILL.md`)**: Leído automáticamente por **OpenCode** y agentes compatibles con el estándar Agent Skills.
 2. **OpenCode Nativo (`~/.config/opencode/`)**:
    - Inyecta el servidor MCP `schema-memory` dentro de `~/.config/opencode/opencode.json` respetando tus proveedores, temas y otros MCPs existentes.
    - Añade el bloque delimitado en `~/.config/opencode/AGENTS.md` y el skill en `~/.config/opencode/skills/schema-memory/SKILL.md`.
-3. **Antigravity (`~/.gemini/config/plugins/schema-memory/`)**: Instala el manifiesto, MCP y skill.
+3. **Antigravity Directo + Plugin (`~/.gemini/config/`)**:
+   - Registra `schema-memory-mcp` directamente en `~/.gemini/config/mcp_config.json` y la regla global en `~/.gemini/config/GEMINI.md` (activo sin necesidad de habilitar plugins manualmente), además del paquete en `~/.gemini/config/plugins/schema-memory/`.
 4. **CLI Global (`~/.local/bin/sm`)**: Enlaza el comando `sm` en tu terminal.
+5. **Actualización de Guardrails en Proyectos Registrados**: Refresca el bloque `AGENTS.md` de tus proyectos registrados con reglas de aislamiento estricto para que el agente nunca inspeccione el código fuente de `schema-memory`.
 
 ---
 

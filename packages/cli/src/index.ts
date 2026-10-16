@@ -6,6 +6,7 @@ import { addCommand } from './commands/add.js';
 import { removeCommand } from './commands/remove.js';
 import { statusCommand } from './commands/status.js';
 import { setupCommand } from './commands/setup.js';
+import { doctorCommand } from './commands/doctor.js';
 
 const program = new Command();
 
@@ -99,6 +100,18 @@ program
       await setupCommand(opts);
     } catch (err: any) {
       console.error('Error during setup:', err.message);
+      process.exit(1);
+    }
+  });
+
+program
+  .command('doctor')
+  .description('Verify global MCP registration, skills, CLI binary and project status')
+  .action(async () => {
+    try {
+      await doctorCommand();
+    } catch (err: any) {
+      console.error('Error running doctor:', err.message);
       process.exit(1);
     }
   });

@@ -36,10 +36,13 @@ export function formatManagedBlock(projectId: string): string {
   return [
     '<!-- schema-memory:begin -->',
     `## schema-memory (proyecto: ${projectId})`,
-    'Este repo documenta su esquema de BD en `.schema-memory/` vía MCP (`schema-memory-mcp`).',
-    'Antes de cambiar tablas/columnas/relaciones: `get_decisions` (historial del porqué) y `get_schema`.',
-    'Nunca modifiques código o migraciones de esquema sin un `confirm_change` aprobado por el usuario.',
-    'Si el código cambió por fuera: `check_drift`.',
+    `Este repositorio gestiona su esquema de base de datos en \`.schema-memory/\` vía MCP (\`schema-memory\` / \`schema-memory-mcp\`).`,
+    `- Pasa siempre \`project: "${projectId}"\` al invocar cualquier herramienta MCP (\`get_decisions\`, \`get_schema\`, \`get_pending_changes\`, \`import_schema\`, \`draft_adr\`, \`confirm_change\`, \`check_drift\`).`,
+    '- Antes de cambiar tablas/columnas/relaciones: llama a `get_decisions` (historial del porqué) y `get_schema`.',
+    '- Nunca modifiques código o migraciones de esquema sin un `confirm_change(userConfirmed=true)` aprobado por el usuario.',
+    '- Si el código cambió por fuera: llama a `check_drift`.',
+    '- **Aislamiento estricto:** Interactúa con `schema-memory` ÚNICAMENTE a través de sus herramientas MCP. NUNCA busques, inspecciones ni analices el código fuente de la herramienta `schema-memory`; analiza únicamente los archivos de este proyecto.',
+    '- **Fail-fast si falta MCP:** Si las herramientas MCP (`get_schema`, `import_schema`, etc.) no están cargadas en tu sesión actual, DETENTE de inmediato sin buscar en el sistema de archivos y pide al usuario ejecutar `sm setup` (o `pnpm sm setup`) y recargar la sesión del agente.',
     '<!-- schema-memory:end -->',
   ].join('\n');
 }
