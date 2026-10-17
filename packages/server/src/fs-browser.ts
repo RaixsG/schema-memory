@@ -1,6 +1,6 @@
 import { readdir, stat } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
-import { resolve, normalize, sep, parse } from 'node:path';
+import { resolve, normalize, parse, win32 as pathWin32, posix as pathPosix } from 'node:path';
 import { homedir, tmpdir } from 'node:os';
 
 export interface DirectoryEntry {
@@ -16,8 +16,13 @@ export interface PathPolicyOptions {
   tmp?: string;
 }
 
+function getPathModule(platform: NodeJS.Platform) {
+  return platform === 'win32' ? pathWin32 : pathPosix;
+}
+
 function normalizeForCompare(targetPath: string, platform: NodeJS.Platform): string {
-  const normalized = normalize(resolve(targetPath));
+  const p = getPathModule(platform);
+  const normalized = p.normalize(p.resolve(targetPath));
   return platform === 'win32' ? normalized.toLowerCase() : normalized;
 }
 
@@ -66,10 +71,11 @@ export function isPathWithin(
   root: string,
   platform: NodeJS.Platform = process.platform
 ): boolean {
+  const p = getPathModule(platform);
   const target = normalizeForCompare(targetPath, platform);
   let base = normalizeForCompare(root, platform);
   if (target === base) return true;
-  if (!base.endsWith(sep)) base += sep;
+  if (!base.endsWith(p.sep)) base += p.sep;
   return target.startsWith(base);
 }
 
