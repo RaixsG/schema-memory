@@ -8,6 +8,7 @@ import {
   Index,
   RefRelation,
 } from './model.js';
+import { hashDbml } from './hash.js';
 
 export interface ValidationError {
   line: number;
@@ -19,22 +20,32 @@ export type ValidationResult =
   | { ok: true }
   | { ok: false; errors: ValidationError[] };
 
-export function validateDbml(src: string): ValidationResult {
-  if (!src.trim()) {
-    return { ok: true };
+const MAX_SCHEMA_CACHE = 64;
+const schemaCache = new Map<string, SchemaModel>();
+
+function getCachedSchema(key: string): SchemaModel | undefined {
+  const cached = schemaCache.get(key);
+  if (!cached) return undefined;
+  // Refresh LRU order
+  schemaCache.delete(key);
+  schemaCache.set(key, cached);
+  return structuredClone(cached);
+}
+
+function setCachedSchema(key: string, model: SchemaModel): void {
+  if (schemaCache.has(key)) {
+    schemaCache.delete(key);
+  } else if (schemaCache.size >= MAX_SCHEMA_CACHE) {
+    const oldestKey = schemaCache.keys().next().value;
+    if (oldestKey !== undefined) {
+      schemaCache.delete(oldestKey);
+    }
   }
-  try {
-    Parser.parse(src, 'dbml');
-    return { ok: true };
-  } catch (error: any) {
-    const line = error?.location?.start?.line ?? 1;
-    const column = error?.location?.start?.column ?? 1;
-    const message = error?.message || 'DBML syntax error';
-    return {
-      ok: false,
-      errors: [{ line, column, message }],
-    };
-  }
+  schemaCache.set(key, structuredClone(model));
+}
+
+export function clearSchemaCache(): void {
+  schemaCache.clear();
 }
 
 function mapRelation(rel0: string, rel1: string): RefRelation {
@@ -53,12 +64,7 @@ function extractDefault(field: any): string | null {
   return null;
 }
 
-export function parseSchema(src: string): SchemaModel {
-  if (!src.trim()) {
-    return { tables: [], refs: [], enums: [] };
-  }
-
-  const database = Parser.parse(src, 'dbml');
+function databaseToSchemaModel(database: any): SchemaModel {
   const tables: Table[] = [];
   const refs: Ref[] = [];
   const enums: Enum[] = [];
@@ -127,4 +133,92 @@ export function parseSchema(src: string): SchemaModel {
   }
 
   return { tables, refs, enums };
+}
+
+export function validateDbml(src: string): ValidationResult {
+  if (!src.trim()) {
+    return { ok: true };
+  }
+  const cacheKey = hashDbml(src);
+  if (schemaCache.has(cacheKey)) {
+    return { ok: true };
+  }
+  try {
+    const database = Parser.parse(src, 'dbml');
+    const model = databaseToSchemaModel(database);
+    setCachedSchema(cacheKey, model);
+    return { ok: true };
+  } catch (error: any) {
+    const line = error?.location?.start?.line ?? 1;
+    const column = error?.location?.start?.column ?? 1;
+    const message = error?.message || 'DBML syntax error';
+    return {
+      ok: false,
+      errors: [{ line, column, message }],
+    };
+  }
+}
+
+export function parseSchema(src: string): SchemaModel {
+  if (!src.trim()) {
+    return { tables: [], refs: [], enums: [] };
+  }
+
+  const cacheKey = hashDbml(src);
+  const cached = getCachedSchema(cacheKey);
+  if (cached) {
+    return cached;
+  }
+
+  const database = Parser.parse(src, 'dbml');
+  const model = databaseToSchemaModel(database);
+  setCachedSchema(cacheKey, model);
+  return structuredClone(model);
+}
+
+export function filterSchemaByTables(
+  model: SchemaModel,
+  tableNames: string[],
+  includeConnected = true
+): SchemaModel {
+  if (!tableNames || tableNames.length === 0) {
+    return model;
+  }
+
+  const requested = new Set(tableNames.map((t) => t.toLowerCase()));
+  const includedTables = new Set<string>(requested);
+
+  const matchingRefs = model.refs.filter((r) => {
+    const fromLower = r.from.table.toLowerCase();
+    const toLower = r.to.table.toLowerCase();
+    const matches = requested.has(fromLower) || requested.has(toLower);
+    if (matches && includeConnected) {
+      includedTables.add(fromLower);
+      includedTables.add(toLower);
+    }
+    return includeConnected
+      ? matches
+      : requested.has(fromLower) && requested.has(toLower);
+  });
+
+  const tables = model.tables.filter((t) =>
+    includedTables.has(t.name.toLowerCase())
+  );
+
+  const usedTypes = new Set<string>();
+  for (const t of tables) {
+    for (const c of t.columns) {
+      usedTypes.add(c.type.toLowerCase());
+    }
+  }
+
+  const enums = model.enums.filter((e) =>
+    usedTypes.has(e.name.toLowerCase())
+  );
+
+  return {
+    tables,
+    refs: matchingRefs,
+    enums,
+  };
 }

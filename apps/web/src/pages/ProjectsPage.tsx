@@ -23,7 +23,11 @@ export function ProjectsPage({ onSelectProject }: { onSelectProject: (id: string
 
   useEffect(() => {
     fetchProjects(false);
-    const interval = setInterval(() => fetchProjects(true), 4000);
+    const interval = setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        fetchProjects(true);
+      }
+    }, 4000);
     const onFocus = () => fetchProjects(true);
     window.addEventListener('focus', onFocus);
     return () => {

@@ -7,12 +7,16 @@ import {
   readConfig,
   readIfExists,
   parseSchema,
+  filterSchemaByTables,
+  serializeDbml,
   savePending,
   getPending,
+  getPendingStatus,
   saveAdrDraft,
   clearPending,
   confirmChange,
   listAdrs,
+  countAdrsStatus,
   readAdr,
   promoteAdr,
   checkDrift,
@@ -37,9 +41,15 @@ Instructions for AI Agent using schema-memory:
 6. STRICT ISOLATION: Interact with schema-memory ONLY via its MCP tools and resources. Never search for, read, or edit .schema-memory files directly.
 `.trim();
 
+function stringifyJson(data: unknown): string {
+  return process.env.SCHEMA_MEMORY_PRETTY_JSON === '1'
+    ? JSON.stringify(data, null, 2)
+    : JSON.stringify(data);
+}
+
 function jsonResponse(data: unknown) {
   return {
-    content: [{ type: 'text' as const, text: JSON.stringify(data, null, 2) }],
+    content: [{ type: 'text' as const, text: stringifyJson(data) }],
   };
 }
 
@@ -49,7 +59,7 @@ function errorResponse(message: string, code = 'ERROR') {
     content: [
       {
         type: 'text' as const,
-        text: JSON.stringify({ code, message }, null, 2),
+        text: stringifyJson({ code, message }),
       },
     ],
   };
@@ -167,7 +177,7 @@ export function createMcpServer(): McpServer {
           {
             uri: uri.href,
             mimeType: 'application/json',
-            text: JSON.stringify(model, null, 2),
+            text: stringifyJson(model),
           },
         ],
       };
@@ -211,10 +221,8 @@ export function createMcpServer(): McpServer {
           {
             uri: uri.href,
             mimeType: 'application/json',
-            text: JSON.stringify(
-              pending || { hasPending: false, message: 'No pending changes.' },
-              null,
-              2
+            text: stringifyJson(
+              pending || { hasPending: false, message: 'No pending changes.' }
             ),
           },
         ],
@@ -259,7 +267,7 @@ export function createMcpServer(): McpServer {
           {
             uri: uri.href,
             mimeType: 'application/json',
-            text: JSON.stringify(
+            text: stringifyJson(
               adrs.map((a) => ({
                 id: a.metadata.id,
                 title: a.metadata.title,
@@ -267,9 +275,7 @@ export function createMcpServer(): McpServer {
                 date: a.metadata.date,
                 affects: a.metadata.affects,
                 decision: a.decision,
-              })),
-              null,
-              2
+              }))
             ),
           },
         ],
@@ -487,22 +493,21 @@ export function createMcpServer(): McpServer {
         const projects = await listProjects();
         const details = await Promise.all(
           projects.map(async (p) => {
-            const config = await readConfig(p.path);
-            const pending = await getPending(p.path);
-            const adrs = await listAdrs(p.path);
-            const unconfirmedAdrs = adrs.filter(
-              (a) => a.metadata.status !== 'confirmado'
-            ).length;
+            const [config, pendingStatus, adrCounts] = await Promise.all([
+              readConfig(p.path),
+              getPendingStatus(p.path),
+              countAdrsStatus(p.path),
+            ]);
             return {
               id: p.id,
               name: p.name,
               path: p.path,
               dialect: config?.dialect || 'postgres',
               stack: config?.stack || [],
-              hasPending: pending !== null,
-              pendingStale: pending?.stale || false,
-              unconfirmedAdrs,
-              totalAdrs: adrs.length,
+              hasPending: pendingStatus.hasPending,
+              pendingStale: pendingStatus.stale,
+              unconfirmedAdrs: adrCounts.unconfirmedAdrs,
+              totalAdrs: adrCounts.totalAdrs,
             };
           })
         );
@@ -529,14 +534,25 @@ export function createMcpServer(): McpServer {
           .optional()
           .default('both')
           .describe('Output format'),
+        tables: z
+          .array(z.string())
+          .optional()
+          .describe(
+            'Optional list of table names to filter the schema and its connected relations (saves context tokens on large schemas)'
+          ),
       },
     },
     async (args) => {
       try {
         const resolved = await resolveProject({ project: args.project });
         const schemaPath = resolve(resolved.path, '.schema-memory', 'schema.dbml');
-        const dbml = (await readIfExists(schemaPath)) || '';
-        const model = parseSchema(dbml);
+        const rawDbml = (await readIfExists(schemaPath)) || '';
+        const fullModel = parseSchema(rawDbml);
+        const hasTableFilter = Array.isArray(args.tables) && args.tables.length > 0;
+        const model = hasTableFilter
+          ? filterSchemaByTables(fullModel, args.tables!, true)
+          : fullModel;
+        const dbml = hasTableFilter ? serializeDbml(model) : rawDbml;
 
         const summary = {
           tablesCount: model.tables.length,
@@ -558,13 +574,15 @@ export function createMcpServer(): McpServer {
           refsCount: model.refs.length,
         };
 
+        const filterMeta = hasTableFilter ? { filteredTables: args.tables } : {};
+
         if (args.format === 'dbml') {
-          return jsonResponse({ project: resolved.id, dbml });
+          return jsonResponse({ project: resolved.id, ...filterMeta, dbml });
         }
         if (args.format === 'summary') {
-          return jsonResponse({ project: resolved.id, summary });
+          return jsonResponse({ project: resolved.id, ...filterMeta, summary });
         }
-        return jsonResponse({ project: resolved.id, dbml, summary });
+        return jsonResponse({ project: resolved.id, ...filterMeta, dbml, summary });
       } catch (err: any) {
         return errorResponse(err.message);
       }
@@ -851,6 +869,11 @@ export function createMcpServer(): McpServer {
       inputSchema: {
         project: z.string().optional().describe('Project ID or directory path'),
         id: z.string().describe('ADR ID (e.g. "0001")'),
+        includeRawMarkdown: z
+          .boolean()
+          .optional()
+          .default(false)
+          .describe('Include rawMarkdown field (defaults to false to save context tokens)'),
       },
     },
     async (args) => {
@@ -862,13 +885,16 @@ export function createMcpServer(): McpServer {
         }
         return jsonResponse({
           project: resolved.id,
+          id: adr.metadata.id,
           metadata: adr.metadata,
           context: adr.context,
           decision: adr.decision,
           alternatives: adr.alternatives,
           consequences: adr.consequences,
           diffText: adr.diffText,
-          rawMarkdown: adr.content,
+          ...(args.includeRawMarkdown === true
+            ? { rawMarkdown: adr.content }
+            : {}),
         });
       } catch (err: any) {
         return errorResponse(err.message);
@@ -980,29 +1006,33 @@ export function createMcpServer(): McpServer {
 
         const createdAdrs: string[] = [];
         if (args.adrs && args.adrs.length > 0) {
-          for (const item of args.adrs) {
-            const nextId = await nextAdrId(resolved.path);
-            const metadata: AdrMetadata = {
-              id: nextId,
-              title: item.title,
-              status: 'reconstruido',
-              date: new Date().toISOString().slice(0, 10),
-              affects: item.affects || [],
-            };
-            const draft: AdrDraft = {
-              title: item.title,
-              context: item.context,
-              decision: item.decision,
-              alternatives: item.alternatives,
-              consequences: item.consequences,
-            };
-            const md = renderAdrMarkdown({
-              metadata,
-              draft,
-            });
-            await writeAdr(resolved.path, metadata, md);
-            createdAdrs.push(nextId);
-          }
+          const baseNextNum = parseInt(await nextAdrId(resolved.path), 10);
+          const today = new Date().toISOString().slice(0, 10);
+          await Promise.all(
+            args.adrs.map(async (item, idx) => {
+              const nextId = String(baseNextNum + idx).padStart(4, '0');
+              const metadata: AdrMetadata = {
+                id: nextId,
+                title: item.title,
+                status: 'reconstruido',
+                date: today,
+                affects: item.affects || [],
+              };
+              const draft: AdrDraft = {
+                title: item.title,
+                context: item.context,
+                decision: item.decision,
+                alternatives: item.alternatives,
+                consequences: item.consequences,
+              };
+              const md = renderAdrMarkdown({
+                metadata,
+                draft,
+              });
+              await writeAdr(resolved.path, metadata, md);
+              createdAdrs[idx] = nextId;
+            })
+          );
         }
 
         return jsonResponse({

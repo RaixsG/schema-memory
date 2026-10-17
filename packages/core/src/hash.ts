@@ -1,11 +1,11 @@
 import { createHash } from 'node:crypto';
+import { stat, readdir } from 'node:fs/promises';
+import { resolve } from 'node:path';
 
 export function normalizeDbml(src: string): string {
   return src
+    .replace(/[ \t]+\r?\n/g, '\n')
     .replace(/\r\n/g, '\n')
-    .split('\n')
-    .map((line) => line.trimEnd())
-    .join('\n')
     .trim();
 }
 
@@ -15,9 +15,6 @@ export function hashDbml(src: string): string {
 }
 
 export async function computeProjectFingerprint(projectPath: string): Promise<string> {
-  const { stat, readdir } = await import('node:fs/promises');
-  const { resolve } = await import('node:path');
-
   const schemaMemoryDir = resolve(projectPath, '.schema-memory');
   const schemaPath = resolve(schemaMemoryDir, 'schema.dbml');
   const changePath = resolve(schemaMemoryDir, 'pending', 'change.json');
@@ -35,8 +32,10 @@ export async function computeProjectFingerprint(projectPath: string): Promise<st
 
   const getAdrMeta = async () => {
     try {
-      const s = await stat(adrDir);
-      const files = await readdir(adrDir).catch(() => []);
+      const [s, files] = await Promise.all([
+        stat(adrDir),
+        readdir(adrDir).catch(() => [] as string[]),
+      ]);
       return `${s.mtimeMs}:${files.length}`;
     } catch {
       return 'none';

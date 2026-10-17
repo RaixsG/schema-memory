@@ -19,6 +19,11 @@ export interface PendingDetails {
   draft: AdrDraft | null;
 }
 
+export interface PendingStatus {
+  hasPending: boolean;
+  stale: boolean;
+}
+
 function getPendingDir(projectPath: string): string {
   return resolve(projectPath, '.schema-memory', 'pending');
 }
@@ -33,6 +38,30 @@ function getDraftPath(projectPath: string): string {
 
 function getSchemaPath(projectPath: string): string {
   return resolve(projectPath, '.schema-memory', 'schema.dbml');
+}
+
+export async function getPendingStatus(
+  projectPath: string
+): Promise<PendingStatus> {
+  const changeContent = await readIfExists(getChangePath(projectPath));
+  if (!changeContent) {
+    return { hasPending: false, stale: false };
+  }
+
+  try {
+    const parsed = JSON.parse(changeContent) as { baseHash?: string };
+    if (!parsed.baseHash) {
+      return { hasPending: true, stale: false };
+    }
+    const currentDbml = (await readIfExists(getSchemaPath(projectPath))) || '';
+    const currentHash = hashDbml(currentDbml);
+    return {
+      hasPending: true,
+      stale: currentHash !== parsed.baseHash,
+    };
+  } catch {
+    return { hasPending: false, stale: false };
+  }
 }
 
 export async function savePending(
@@ -60,11 +89,16 @@ export async function savePending(
     );
   }
 
-  const currentDbml = (await readIfExists(getSchemaPath(projectPath))) || '';
+  const [currentDbmlRaw, existingRaw, draftContent] = await Promise.all([
+    readIfExists(getSchemaPath(projectPath)),
+    readIfExists(getChangePath(projectPath)),
+    readIfExists(getDraftPath(projectPath)),
+  ]);
+
+  const currentDbml = currentDbmlRaw || '';
   const baseHash = hashDbml(currentDbml);
   const now = new Date().toISOString();
 
-  const existingRaw = await readIfExists(getChangePath(projectPath));
   let createdAt = now;
   if (existingRaw) {
     try {
@@ -91,11 +125,27 @@ export async function savePending(
     JSON.stringify(pending, null, 2) + '\n'
   );
 
-  const details = await getPending(projectPath);
-  if (!details) {
-    throw new Error('Failed to retrieve saved pending change.');
+  const beforeModel = parseSchema(currentDbml);
+  const afterModel = options.model ?? parseSchema(dbml);
+  const changes = diffSchemas(beforeModel, afterModel);
+  const affects = affectedOf(changes);
+
+  let draft: AdrDraft | null = null;
+  if (draftContent) {
+    try {
+      draft = AdrDraft.parse(JSON.parse(draftContent));
+    } catch {
+      // ignore corrupt draft
+    }
   }
-  return details;
+
+  return {
+    change: pending,
+    changes,
+    affects,
+    stale: false,
+    draft,
+  };
 }
 
 export async function saveAdrDraft(
@@ -112,8 +162,10 @@ export async function saveAdrDraft(
 }
 
 export async function clearPending(projectPath: string): Promise<void> {
-  await removeIfExists(getChangePath(projectPath));
-  await removeIfExists(getDraftPath(projectPath));
+  await Promise.all([
+    removeIfExists(getChangePath(projectPath)),
+    removeIfExists(getDraftPath(projectPath)),
+  ]);
 }
 
 export async function getPending(
@@ -122,8 +174,13 @@ export async function getPending(
   const changeContent = await readIfExists(getChangePath(projectPath));
   if (!changeContent) return null;
 
+  const [currentDbmlRaw, draftContent] = await Promise.all([
+    readIfExists(getSchemaPath(projectPath)),
+    readIfExists(getDraftPath(projectPath)),
+  ]);
+
   const change = PendingChange.parse(JSON.parse(changeContent));
-  const currentDbml = (await readIfExists(getSchemaPath(projectPath))) || '';
+  const currentDbml = currentDbmlRaw || '';
   const currentHash = hashDbml(currentDbml);
   const stale = currentHash !== change.baseHash;
 
@@ -133,7 +190,6 @@ export async function getPending(
   const affects = affectedOf(changes);
 
   let draft: AdrDraft | null = null;
-  const draftContent = await readIfExists(getDraftPath(projectPath));
   if (draftContent) {
     try {
       draft = AdrDraft.parse(JSON.parse(draftContent));

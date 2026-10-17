@@ -4,13 +4,6 @@ import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 import { Command } from 'commander';
-import { startStdioServer } from '@schema-memory/mcp';
-import { uiCommand } from './commands/ui.js';
-import { addCommand } from './commands/add.js';
-import { removeCommand } from './commands/remove.js';
-import { statusCommand } from './commands/status.js';
-import { setupCommand } from './commands/setup.js';
-import { doctorCommand } from './commands/doctor.js';
 
 declare const __CLI_VERSION__: string;
 
@@ -62,6 +55,7 @@ async function offerFirstRunSetup(): Promise<void> {
 
   const normalized = answer.trim().toLowerCase();
   if (normalized === '' || normalized === 'y' || normalized === 'yes') {
+    const { setupCommand } = await import('./commands/setup.js');
     await setupCommand({ target: 'all' });
   } else {
     console.log(
@@ -87,6 +81,7 @@ program
   .action(async (opts) => {
     try {
       await offerFirstRunSetup();
+      const { uiCommand } = await import('./commands/ui.js');
       await uiCommand(opts);
     } catch (err: any) {
       console.error('Error starting UI:', err.message);
@@ -104,6 +99,7 @@ program
   .option('--project-skill', 'Install custom project skill in .agents/')
   .action(async (targetPath = '.', opts) => {
     try {
+      const { addCommand } = await import('./commands/add.js');
       await addCommand(targetPath, opts);
     } catch (err: any) {
       console.error('Error adding project:', err.message);
@@ -119,6 +115,7 @@ program
   .option('-y, --yes', 'Skip confirmation prompt')
   .action(async (id, opts) => {
     try {
+      const { removeCommand } = await import('./commands/remove.js');
       await removeCommand(id, opts);
     } catch (err: any) {
       console.error('Error removing project:', err.message);
@@ -133,6 +130,7 @@ program
   .option('-p, --project <project>', 'Filter by project ID or path')
   .action(async (opts) => {
     try {
+      const { statusCommand } = await import('./commands/status.js');
       await statusCommand(opts);
     } catch (err: any) {
       console.error('Error checking status:', err.message);
@@ -145,6 +143,7 @@ program
   .description('Start the MCP server over stdio for agent integration')
   .action(async () => {
     try {
+      const { startStdioServer } = await import('@schema-memory/mcp');
       await startStdioServer();
     } catch (err: any) {
       console.error('Fatal MCP server error:', err.message);
@@ -160,6 +159,7 @@ program
   .option('--cli-only', 'Only link the global "sm" and "schema-memory" CLI commands in ~/.local/bin')
   .action(async (opts) => {
     try {
+      const { setupCommand } = await import('./commands/setup.js');
       await setupCommand(opts);
     } catch (err: any) {
       console.error('Error during setup:', err.message);
@@ -172,6 +172,7 @@ program
   .description('Verify global MCP registration, skills, CLI binary and project status')
   .action(async () => {
     try {
+      const { doctorCommand } = await import('./commands/doctor.js');
       await doctorCommand();
     } catch (err: any) {
       console.error('Error running doctor:', err.message);

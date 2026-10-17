@@ -2,7 +2,6 @@ import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
 import { resolve } from 'node:path';
 import { existsSync } from 'node:fs';
-import { readdir } from 'node:fs/promises';
 import {
   listProjects,
   resolveProject,
@@ -15,8 +14,10 @@ import {
   removeProject,
   savePending,
   getPending,
+  getPendingStatus,
   clearPending,
   listAdrs,
+  countAdrsStatus,
   readAdr,
   AdrStatus,
   Dialect,
@@ -39,12 +40,11 @@ export const projectsRouter = new Hono()
       const projects = await listProjects();
       const list = await Promise.all(
         projects.map(async (p) => {
-          const config = await readConfig(p.path);
-          const pending = await getPending(p.path);
-          const adrs = await listAdrs(p.path);
-          const unconfirmedAdrs = adrs.filter(
-            (a) => a.metadata.status !== 'confirmado'
-          ).length;
+          const [config, pendingStatus, adrCounts] = await Promise.all([
+            readConfig(p.path),
+            getPendingStatus(p.path),
+            countAdrsStatus(p.path),
+          ]);
 
           return {
             id: p.id,
@@ -52,10 +52,10 @@ export const projectsRouter = new Hono()
             path: p.path,
             dialect: config?.dialect || 'postgres',
             stack: config?.stack || [],
-            hasPending: pending !== null,
-            pendingStale: pending?.stale || false,
-            unconfirmedAdrs,
-            totalAdrs: adrs.length,
+            hasPending: pendingStatus.hasPending,
+            pendingStale: pendingStatus.stale,
+            unconfirmedAdrs: adrCounts.unconfirmedAdrs,
+            totalAdrs: adrCounts.totalAdrs,
           };
         })
       );
@@ -111,17 +111,33 @@ export const projectsRouter = new Hono()
     }
   })
 
-  // 5. Project Schema
+  // 5. Project Schema (supports ETag / 304 Not Modified and includes pending + fingerprint)
   .get('/:id/schema', async (c) => {
     try {
       const id = c.req.param('id');
       const resolved = await resolveProject({ project: id });
-      const config = await readConfig(resolved.path);
+      const fingerprint = await computeProjectFingerprint(resolved.path);
+      const etag = `"${fingerprint}"`;
+
+      c.header('ETag', etag);
+      const ifNoneMatch = c.req.header('If-None-Match');
+      if (ifNoneMatch && (ifNoneMatch === etag || ifNoneMatch === fingerprint)) {
+        return c.body(null, 304);
+      }
+
       const schemaPath = resolve(resolved.path, '.schema-memory', 'schema.dbml');
-      const dbml = (await readIfExists(schemaPath)) || '';
+      const layoutPath = resolve(resolved.path, '.schema-memory', 'layout.json');
+
+      const [config, dbmlRaw, pending, layoutRaw] = await Promise.all([
+        readConfig(resolved.path),
+        readIfExists(schemaPath),
+        getPending(resolved.path),
+        readIfExists(layoutPath),
+      ]);
+
+      const dbml = dbmlRaw || '';
       const model = parseSchema(dbml);
 
-      const pending = await getPending(resolved.path);
       let pendingModel = null;
       if (pending && !pending.stale && pending.change?.proposedDbml) {
         try {
@@ -131,8 +147,6 @@ export const projectsRouter = new Hono()
         }
       }
 
-      const layoutPath = resolve(resolved.path, '.schema-memory', 'layout.json');
-      const layoutRaw = await readIfExists(layoutPath);
       let layout: Record<string, { x: number; y: number }> = {};
       if (layoutRaw) {
         try {
@@ -150,7 +164,9 @@ export const projectsRouter = new Hono()
         dbml,
         model,
         pendingModel,
+        pending,
         layout,
+        fingerprint,
       });
     } catch (err: any) {
       return c.json({ error: err.message }, 400);
@@ -162,27 +178,17 @@ export const projectsRouter = new Hono()
     try {
       const id = c.req.param('id');
       const resolved = await resolveProject({ project: id });
-      const schemaDir = resolve(resolved.path, '.schema-memory');
-      const changePath = resolve(schemaDir, 'pending', 'change.json');
-      const adrDir = resolve(schemaDir, 'adr');
 
-      const fingerprint = await computeProjectFingerprint(resolved.path);
-      const hasPending = existsSync(changePath);
-
-      let adrCount = 0;
-      try {
-        if (existsSync(adrDir)) {
-          const files = await readdir(adrDir);
-          adrCount = files.filter((f) => f.endsWith('.md')).length;
-        }
-      } catch {
-        adrCount = 0;
-      }
+      const [fingerprint, pendingStatus, adrCounts] = await Promise.all([
+        computeProjectFingerprint(resolved.path),
+        getPendingStatus(resolved.path),
+        countAdrsStatus(resolved.path),
+      ]);
 
       return c.json({
         fingerprint,
-        hasPending,
-        adrCount,
+        hasPending: pendingStatus.hasPending,
+        adrCount: adrCounts.totalAdrs,
       });
     } catch (err: any) {
       return c.json({ error: err.message }, 400);
@@ -303,7 +309,8 @@ export const projectsRouter = new Hono()
         source: 'ui',
         note: body.note,
       });
-      return c.json({ details });
+      const fingerprint = await computeProjectFingerprint(resolved.path);
+      return c.json({ details, fingerprint });
     } catch (err: any) {
       return c.json({ error: err.message }, 400);
     }

@@ -267,5 +267,41 @@ describe('M4: MCP Server and Tool Integration', () => {
     })) as any;
     const driftData = JSON.parse(driftRes.content[0].text);
     expect(driftData.inSync).toBe(true);
+
+    // 11. get_schema with tables filter
+    const filteredSchemaRes = (await client.callTool({
+      name: 'get_schema',
+      arguments: {
+        project: 'mcp-test-project',
+        tables: ['users'],
+      },
+    })) as any;
+    const filteredSchemaData = JSON.parse(filteredSchemaRes.content[0].text);
+    expect(filteredSchemaData.filteredTables).toEqual(['users']);
+    expect(filteredSchemaData.summary.tables.length).toBe(1);
+    expect(filteredSchemaData.summary.tables[0].name).toBe('users');
+
+    // 12. get_adr with includeRawMarkdown: false (default) vs true
+    const adrCompactRes = (await client.callTool({
+      name: 'get_adr',
+      arguments: {
+        project: 'mcp-test-project',
+        id: '0002',
+      },
+    })) as any;
+    const adrCompactData = JSON.parse(adrCompactRes.content[0].text);
+    expect(adrCompactData.id).toBe('0002');
+    expect(adrCompactData.rawMarkdown).toBeUndefined();
+
+    const adrFullRes = (await client.callTool({
+      name: 'get_adr',
+      arguments: {
+        project: 'mcp-test-project',
+        id: '0002',
+        includeRawMarkdown: true,
+      },
+    })) as any;
+    const adrFullData = JSON.parse(adrFullRes.content[0].text);
+    expect(adrFullData.rawMarkdown).toContain('## Contexto');
   });
 });

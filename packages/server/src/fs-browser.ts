@@ -79,16 +79,40 @@ export function isPathWithin(
   return target.startsWith(base);
 }
 
+let cachedDefaultRoots: string[] | null = null;
+
+async function pathExists(p: string): Promise<boolean> {
+  try {
+    await stat(p);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function isPathAllowed(
   targetPath: string,
   options: PathPolicyOptions = {}
 ): boolean {
   const platform = options.platform ?? process.platform;
-  const roots = computeAllowedRoots({
-    platform,
-    ...(options.home ? { home: options.home } : {}),
-    ...(options.tmp ? { tmp: options.tmp } : {}),
-  });
+  const isDefault =
+    options.platform === undefined &&
+    options.home === undefined &&
+    options.tmp === undefined;
+
+  let roots: string[];
+  if (isDefault) {
+    if (!cachedDefaultRoots) {
+      cachedDefaultRoots = computeAllowedRoots();
+    }
+    roots = cachedDefaultRoots;
+  } else {
+    roots = computeAllowedRoots({
+      platform,
+      ...(options.home ? { home: options.home } : {}),
+      ...(options.tmp ? { tmp: options.tmp } : {}),
+    });
+  }
   return roots.some((root) => isPathWithin(targetPath, root, platform));
 }
 
@@ -116,43 +140,41 @@ export async function listDirectories(
   }
 
   const entries = await readdir(current, { withFileTypes: true });
-  const directories: DirectoryEntry[] = [];
+  const candidateEntries = entries.filter(
+    (entry) =>
+      (entry.isDirectory() || entry.isSymbolicLink()) &&
+      !entry.name.startsWith('.')
+  );
 
-  for (const entry of entries) {
-    if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
-    if (entry.name.startsWith('.')) continue; // skip hidden folders like .git, .cache
-
-    const fullPath = resolve(current, entry.name);
-    try {
-      const entryStat = await stat(fullPath);
-      if (!entryStat.isDirectory()) continue;
-
-      let isGitRepo = false;
+  const inspected = await Promise.all(
+    candidateEntries.map(async (entry): Promise<DirectoryEntry | null> => {
+      const fullPath = resolve(current, entry.name);
       try {
-        await stat(resolve(fullPath, '.git'));
-        isGitRepo = true;
-      } catch {
-        // ignore
-      }
+        if (entry.isSymbolicLink()) {
+          const entryStat = await stat(fullPath);
+          if (!entryStat.isDirectory()) return null;
+        }
 
-      let hasSchemaMemory = false;
-      try {
-        await stat(resolve(fullPath, '.schema-memory'));
-        hasSchemaMemory = true;
-      } catch {
-        // ignore
-      }
+        const [isGitRepo, hasSchemaMemory] = await Promise.all([
+          pathExists(resolve(fullPath, '.git')),
+          pathExists(resolve(fullPath, '.schema-memory')),
+        ]);
 
-      directories.push({
-        name: entry.name,
-        path: fullPath,
-        isGitRepo,
-        hasSchemaMemory,
-      });
-    } catch {
-      // skip unreadable directories
-    }
-  }
+        return {
+          name: entry.name,
+          path: fullPath,
+          isGitRepo,
+          hasSchemaMemory,
+        };
+      } catch {
+        return null;
+      }
+    })
+  );
+
+  const directories: DirectoryEntry[] = inspected.filter(
+    (d): d is DirectoryEntry => d !== null
+  );
 
   // On Windows, surface every drive root as a navigable entry when sitting
   // at the root of a drive (e.g. C:\) so users can switch to E:\ projects.

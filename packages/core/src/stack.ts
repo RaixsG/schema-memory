@@ -12,68 +12,57 @@ async function exists(path: string): Promise<boolean> {
 }
 
 export async function detectStack(repoPath: string): Promise<string[]> {
+  const [
+    hasPrismaDir,
+    hasPrismaRoot,
+    hasKnexJs,
+    hasKnexTs,
+    hasKnexCjs,
+    hasDrizzleTs,
+    hasDrizzleJs,
+    hasDrizzleJson,
+    hasDjango,
+    hasLaravel,
+    hasGemfile,
+    hasRailsSchema,
+    hasAlembic,
+    hasMigrationsRoot,
+    hasDbMigrations,
+    hasSqlMigrations,
+    pkgContent,
+  ] = await Promise.all([
+    exists(resolve(repoPath, 'prisma', 'schema.prisma')),
+    exists(resolve(repoPath, 'schema.prisma')),
+    exists(resolve(repoPath, 'knexfile.js')),
+    exists(resolve(repoPath, 'knexfile.ts')),
+    exists(resolve(repoPath, 'knexfile.cjs')),
+    exists(resolve(repoPath, 'drizzle.config.ts')),
+    exists(resolve(repoPath, 'drizzle.config.js')),
+    exists(resolve(repoPath, 'drizzle.config.json')),
+    exists(resolve(repoPath, 'manage.py')),
+    exists(resolve(repoPath, 'artisan')),
+    exists(resolve(repoPath, 'Gemfile')),
+    exists(resolve(repoPath, 'db', 'schema.rb')),
+    exists(resolve(repoPath, 'alembic.ini')),
+    exists(resolve(repoPath, 'migrations')),
+    exists(resolve(repoPath, 'db', 'migrations')),
+    exists(resolve(repoPath, 'sql', 'migrations')),
+    readIfExists(resolve(repoPath, 'package.json')),
+  ]);
+
   const stack: string[] = [];
 
-  // Prisma
-  if (
-    (await exists(resolve(repoPath, 'prisma', 'schema.prisma'))) ||
-    (await exists(resolve(repoPath, 'schema.prisma')))
-  ) {
-    stack.push('prisma');
-  }
-
-  // Knex
-  if (
-    (await exists(resolve(repoPath, 'knexfile.js'))) ||
-    (await exists(resolve(repoPath, 'knexfile.ts'))) ||
-    (await exists(resolve(repoPath, 'knexfile.cjs')))
-  ) {
-    stack.push('knex');
-  }
-
-  // Drizzle
-  if (
-    (await exists(resolve(repoPath, 'drizzle.config.ts'))) ||
-    (await exists(resolve(repoPath, 'drizzle.config.js'))) ||
-    (await exists(resolve(repoPath, 'drizzle.config.json')))
-  ) {
-    stack.push('drizzle');
-  }
-
-  // Django
-  if (await exists(resolve(repoPath, 'manage.py'))) {
-    stack.push('django');
-  }
-
-  // Laravel
-  if (await exists(resolve(repoPath, 'artisan'))) {
-    stack.push('laravel');
-  }
-
-  // Rails
-  if (
-    (await exists(resolve(repoPath, 'Gemfile'))) &&
-    (await exists(resolve(repoPath, 'db', 'schema.rb')))
-  ) {
-    stack.push('rails');
-  }
-
-  // Alembic
-  if (await exists(resolve(repoPath, 'alembic.ini'))) {
-    stack.push('alembic');
-  }
-
-  // SQL migrations directory
-  if (
-    (await exists(resolve(repoPath, 'migrations'))) ||
-    (await exists(resolve(repoPath, 'db', 'migrations'))) ||
-    (await exists(resolve(repoPath, 'sql', 'migrations')))
-  ) {
+  if (hasPrismaDir || hasPrismaRoot) stack.push('prisma');
+  if (hasKnexJs || hasKnexTs || hasKnexCjs) stack.push('knex');
+  if (hasDrizzleTs || hasDrizzleJs || hasDrizzleJson) stack.push('drizzle');
+  if (hasDjango) stack.push('django');
+  if (hasLaravel) stack.push('laravel');
+  if (hasGemfile && hasRailsSchema) stack.push('rails');
+  if (hasAlembic) stack.push('alembic');
+  if (hasMigrationsRoot || hasDbMigrations || hasSqlMigrations) {
     stack.push('sql-migrations');
   }
 
-  // package.json checks for TypeORM or Sequelize
-  const pkgContent = await readIfExists(resolve(repoPath, 'package.json'));
   if (pkgContent) {
     try {
       const pkg = JSON.parse(pkgContent);

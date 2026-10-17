@@ -26,7 +26,7 @@ interface SchemaStore {
     id: string,
     opts?: { initialTable?: string | null; silent?: boolean }
   ) => Promise<void>;
-  syncIfNeeded: () => Promise<boolean>;
+  syncIfNeeded: (incomingFingerprint?: string) => Promise<boolean>;
   updateLayout: (tableName: string, pos: { x: number; y: number }) => void;
   setSelectedTable: (tableName: string | null) => void;
   setSelectedColumn: (colName: string | null) => void;
@@ -88,15 +88,13 @@ export const useSchemaStore = create<SchemaStore>((set, get) => ({
       set({ isLoading: true, error: null, projectId: id });
     }
     try {
-      const [data, pendingData, adrsData, syncData] = await Promise.all([
+      const [data, adrsData] = await Promise.all([
         api.getProjectSchema(id),
-        api.getPending(id),
         api.getAdrs(id),
-        api.getProjectSync(id),
       ]);
 
       const workingSource = data.pendingModel || data.model;
-      const workingModel: SchemaModel = JSON.parse(JSON.stringify(workingSource));
+      const workingModel: SchemaModel = structuredClone(workingSource);
 
       const preferredTable =
         opts?.initialTable !== undefined
@@ -117,9 +115,9 @@ export const useSchemaStore = create<SchemaStore>((set, get) => ({
         baseModel: data.model,
         model: workingModel,
         layout: data.layout || {},
-        pending: pendingData.pending,
+        pending: data.pending ?? null,
         adrs: adrsData.adrs || [],
-        lastFingerprint: syncData.fingerprint,
+        lastFingerprint: data.fingerprint ?? get().lastFingerprint,
         selectedTable: resolvedTable,
         isLoading: false,
         error: null,
@@ -131,18 +129,19 @@ export const useSchemaStore = create<SchemaStore>((set, get) => ({
     }
   },
 
-  syncIfNeeded: async () => {
+  syncIfNeeded: async (incomingFingerprint?: string) => {
     const { projectId, lastFingerprint, isLoading } = get();
     if (!projectId || isLoading) return false;
     try {
-      const syncData = await api.getProjectSync(projectId);
-      if (lastFingerprint && syncData.fingerprint !== lastFingerprint) {
+      const currentFp =
+        incomingFingerprint ?? (await api.getProjectSync(projectId)).fingerprint;
+      if (lastFingerprint && currentFp !== lastFingerprint) {
         await get().loadProject(projectId, { silent: true });
-        set({ lastSyncedAt: Date.now() });
+        set({ lastSyncedAt: Date.now(), lastFingerprint: currentFp });
         return true;
       }
       if (!lastFingerprint) {
-        set({ lastFingerprint: syncData.fingerprint });
+        set({ lastFingerprint: currentFp });
       }
     } catch {
       // ignore transient network error
@@ -196,10 +195,15 @@ export const useSchemaStore = create<SchemaStore>((set, get) => ({
 
     set({ model: updatedModel, layout: updatedLayout, selectedTable: name });
 
-    const { details } = await api.savePending(projectId, { model: updatedModel });
-    await api.updateLayout(projectId, updatedLayout);
-    set({ pending: details });
-    await updateStoreFingerprint(projectId, set);
+    const [{ details, fingerprint }] = await Promise.all([
+      api.savePending(projectId, { model: updatedModel }),
+      api.updateLayout(projectId, updatedLayout),
+    ]);
+    set({
+      pending: details,
+      ...(fingerprint ? { lastFingerprint: fingerprint } : {}),
+    });
+    if (!fingerprint) await updateStoreFingerprint(projectId, set);
   },
 
   updateTable: async (oldName: string, newName: string, note?: string) => {
@@ -228,10 +232,15 @@ export const useSchemaStore = create<SchemaStore>((set, get) => ({
     const updatedModel = { ...model, tables: updatedTables, refs: updatedRefs };
     set({ model: updatedModel, layout: updatedLayout, selectedTable: newName });
 
-    const { details } = await api.savePending(projectId, { model: updatedModel });
-    await api.updateLayout(projectId, updatedLayout);
-    set({ pending: details });
-    await updateStoreFingerprint(projectId, set);
+    const [{ details, fingerprint }] = await Promise.all([
+      api.savePending(projectId, { model: updatedModel }),
+      api.updateLayout(projectId, updatedLayout),
+    ]);
+    set({
+      pending: details,
+      ...(fingerprint ? { lastFingerprint: fingerprint } : {}),
+    });
+    if (!fingerprint) await updateStoreFingerprint(projectId, set);
   },
 
   removeTable: async (name: string) => {
@@ -252,10 +261,15 @@ export const useSchemaStore = create<SchemaStore>((set, get) => ({
       selectedTable: updatedTables[0]?.name || null,
     });
 
-    const { details } = await api.savePending(projectId, { model: updatedModel });
-    await api.updateLayout(projectId, updatedLayout);
-    set({ pending: details });
-    await updateStoreFingerprint(projectId, set);
+    const [{ details, fingerprint }] = await Promise.all([
+      api.savePending(projectId, { model: updatedModel }),
+      api.updateLayout(projectId, updatedLayout),
+    ]);
+    set({
+      pending: details,
+      ...(fingerprint ? { lastFingerprint: fingerprint } : {}),
+    });
+    if (!fingerprint) await updateStoreFingerprint(projectId, set);
   },
 
   addColumn: async (tableName: string, column: Column) => {
@@ -270,9 +284,12 @@ export const useSchemaStore = create<SchemaStore>((set, get) => ({
     const updatedModel = { ...model, tables: updatedTables };
     set({ model: updatedModel });
 
-    const { details } = await api.savePending(projectId, { model: updatedModel });
-    set({ pending: details });
-    await updateStoreFingerprint(projectId, set);
+    const { details, fingerprint } = await api.savePending(projectId, { model: updatedModel });
+    set({
+      pending: details,
+      ...(fingerprint ? { lastFingerprint: fingerprint } : {}),
+    });
+    if (!fingerprint) await updateStoreFingerprint(projectId, set);
   },
 
   updateColumn: async (tableName: string, oldColName: string, column: Column) => {
@@ -290,9 +307,12 @@ export const useSchemaStore = create<SchemaStore>((set, get) => ({
     const updatedModel = { ...model, tables: updatedTables };
     set({ model: updatedModel });
 
-    const { details } = await api.savePending(projectId, { model: updatedModel });
-    set({ pending: details });
-    await updateStoreFingerprint(projectId, set);
+    const { details, fingerprint } = await api.savePending(projectId, { model: updatedModel });
+    set({
+      pending: details,
+      ...(fingerprint ? { lastFingerprint: fingerprint } : {}),
+    });
+    if (!fingerprint) await updateStoreFingerprint(projectId, set);
   },
 
   removeColumn: async (tableName: string, colName: string) => {
@@ -307,9 +327,12 @@ export const useSchemaStore = create<SchemaStore>((set, get) => ({
     const updatedModel = { ...model, tables: updatedTables };
     set({ model: updatedModel });
 
-    const { details } = await api.savePending(projectId, { model: updatedModel });
-    set({ pending: details });
-    await updateStoreFingerprint(projectId, set);
+    const { details, fingerprint } = await api.savePending(projectId, { model: updatedModel });
+    set({
+      pending: details,
+      ...(fingerprint ? { lastFingerprint: fingerprint } : {}),
+    });
+    if (!fingerprint) await updateStoreFingerprint(projectId, set);
   },
 
   addRef: async (ref: Ref) => {
@@ -319,9 +342,12 @@ export const useSchemaStore = create<SchemaStore>((set, get) => ({
     const updatedModel = { ...model, refs: [...model.refs, ref] };
     set({ model: updatedModel });
 
-    const { details } = await api.savePending(projectId, { model: updatedModel });
-    set({ pending: details });
-    await updateStoreFingerprint(projectId, set);
+    const { details, fingerprint } = await api.savePending(projectId, { model: updatedModel });
+    set({
+      pending: details,
+      ...(fingerprint ? { lastFingerprint: fingerprint } : {}),
+    });
+    if (!fingerprint) await updateStoreFingerprint(projectId, set);
   },
 
   updateRef: async (index: number, updated: Partial<Ref>) => {
@@ -334,9 +360,12 @@ export const useSchemaStore = create<SchemaStore>((set, get) => ({
     const updatedModel = { ...model, refs: updatedRefs };
     set({ model: updatedModel });
 
-    const { details } = await api.savePending(projectId, { model: updatedModel });
-    set({ pending: details });
-    await updateStoreFingerprint(projectId, set);
+    const { details, fingerprint } = await api.savePending(projectId, { model: updatedModel });
+    set({
+      pending: details,
+      ...(fingerprint ? { lastFingerprint: fingerprint } : {}),
+    });
+    if (!fingerprint) await updateStoreFingerprint(projectId, set);
   },
 
   removeRef: async (index: number) => {
@@ -352,9 +381,12 @@ export const useSchemaStore = create<SchemaStore>((set, get) => ({
       selectedEdgeIndex: selectedEdgeIndex === index ? null : selectedEdgeIndex,
     });
 
-    const { details } = await api.savePending(projectId, { model: updatedModel });
-    set({ pending: details });
-    await updateStoreFingerprint(projectId, set);
+    const { details, fingerprint } = await api.savePending(projectId, { model: updatedModel });
+    set({
+      pending: details,
+      ...(fingerprint ? { lastFingerprint: fingerprint } : {}),
+    });
+    if (!fingerprint) await updateStoreFingerprint(projectId, set);
   },
 
   discardPending: async () => {
@@ -366,10 +398,11 @@ export const useSchemaStore = create<SchemaStore>((set, get) => ({
     const data = await api.getProjectSchema(projectId);
     set({
       baseModel: data.model,
-      model: JSON.parse(JSON.stringify(data.model)),
+      model: structuredClone(data.model),
       pending: null,
+      ...(data.fingerprint ? { lastFingerprint: data.fingerprint } : {}),
     });
-    await updateStoreFingerprint(projectId, set);
+    if (!data.fingerprint) await updateStoreFingerprint(projectId, set);
   },
 
   refreshPending: async () => {

@@ -125,17 +125,36 @@ export function SchemaCanvas() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [setSelectedTable, setSelectedEdgeIndex]);
 
+const EMPTY_HIGHLIGHTS: Array<{ name: string; role: 'source' | 'target' }> = [];
+
   // Active relationship / table graph context
   const activeContext = useMemo(() => {
+    const highlightedByTable = new Map<
+      string,
+      Array<{ name: string; role: 'source' | 'target' }>
+    >();
+
+    const addHighlight = (
+      tableName: string,
+      colName: string,
+      role: 'source' | 'target'
+    ) => {
+      let list = highlightedByTable.get(tableName);
+      if (!list) {
+        list = [];
+        highlightedByTable.set(tableName, list);
+      }
+      list.push({ name: colName, role });
+    };
+
     if (!model) {
       return {
         selectedRef: null,
         activeTableNames: new Set<string>(),
         sourceTableName: null as string | null,
         targetTableName: null as string | null,
-        sourceColumns: [] as string[],
-        targetColumns: [] as string[],
         connectedEdgeIndices: new Set<number>(),
+        highlightedByTable,
         isFiltering: false,
       };
     }
@@ -143,14 +162,19 @@ export function SchemaCanvas() {
     if (selectedEdgeIndex !== null && model.refs[selectedEdgeIndex]) {
       const ref = model.refs[selectedEdgeIndex];
       const activeTableNames = new Set<string>([ref.from.table, ref.to.table]);
+      ref.from.columns.forEach((colName) =>
+        addHighlight(ref.from.table, colName, 'source')
+      );
+      ref.to.columns.forEach((colName) =>
+        addHighlight(ref.to.table, colName, 'target')
+      );
       return {
         selectedRef: ref,
         activeTableNames,
         sourceTableName: ref.from.table,
         targetTableName: ref.to.table,
-        sourceColumns: ref.from.columns,
-        targetColumns: ref.to.columns,
         connectedEdgeIndices: new Set<number>([selectedEdgeIndex]),
+        highlightedByTable,
         isFiltering: true,
       };
     }
@@ -164,6 +188,19 @@ export function SchemaCanvas() {
           connectedEdgeIndices.add(idx);
           activeTableNames.add(r.from.table);
           activeTableNames.add(r.to.table);
+
+          if (r.to.table === selectedTable) {
+            r.from.columns.forEach((c) => addHighlight(r.from.table, c, 'source'));
+          }
+          if (r.from.table === selectedTable) {
+            r.to.columns.forEach((c) => addHighlight(r.to.table, c, 'target'));
+          }
+          if (r.from.table === selectedTable) {
+            r.from.columns.forEach((c) => addHighlight(selectedTable, c, 'source'));
+          }
+          if (r.to.table === selectedTable) {
+            r.to.columns.forEach((c) => addHighlight(selectedTable, c, 'target'));
+          }
         }
       });
 
@@ -172,9 +209,8 @@ export function SchemaCanvas() {
         activeTableNames,
         sourceTableName: null,
         targetTableName: null,
-        sourceColumns: [],
-        targetColumns: [],
         connectedEdgeIndices,
+        highlightedByTable,
         isFiltering: true,
       };
     }
@@ -184,18 +220,22 @@ export function SchemaCanvas() {
       activeTableNames: new Set<string>(),
       sourceTableName: null,
       targetTableName: null,
-      sourceColumns: [],
-      targetColumns: [],
       connectedEdgeIndices: new Set<number>(),
+      highlightedByTable,
       isFiltering: false,
     };
   }, [model, selectedEdgeIndex, selectedTable]);
 
+  // Keep latest layout in ref so dragging a single node does not invalidate all TableNode memos
+  const layoutRef = useRef(layout);
+  layoutRef.current = layout;
+
   // Build nodes from model.tables
   const initialNodes: Node[] = useMemo(() => {
     if (!model) return [];
+    const currentLayout = layoutRef.current;
     return model.tables.map((table, index) => {
-      const pos = layout[table.name] || {
+      const pos = currentLayout[table.name] || {
         x: 50 + (index % 3) * 320,
         y: 50 + Math.floor(index / 3) * 280,
       };
@@ -204,31 +244,17 @@ export function SchemaCanvas() {
       const isDimmed = activeContext.isFiltering && !activeContext.activeTableNames.has(table.name);
 
       let isRelationshipEndpoint: 'source' | 'target' | null = null;
-      const highlightedColumns: Array<{ name: string; role: 'source' | 'target' }> = [];
-
       if (activeContext.selectedRef) {
         if (table.name === activeContext.sourceTableName) {
           isRelationshipEndpoint = 'source';
-          activeContext.sourceColumns.forEach((colName) => {
-            highlightedColumns.push({ name: colName, role: 'source' });
-          });
         }
         if (table.name === activeContext.targetTableName) {
           isRelationshipEndpoint = 'target';
-          activeContext.targetColumns.forEach((colName) => {
-            highlightedColumns.push({ name: colName, role: 'target' });
-          });
         }
-      } else if (selectedTable) {
-        // Highlight columns that participate in connected references with selectedTable
-        model.refs.forEach((r) => {
-          if (r.from.table === table.name && r.to.table === selectedTable) {
-            r.from.columns.forEach((c) => highlightedColumns.push({ name: c, role: 'source' }));
-          } else if (r.to.table === table.name && r.from.table === selectedTable) {
-            r.to.columns.forEach((c) => highlightedColumns.push({ name: c, role: 'target' }));
-          }
-        });
       }
+
+      const highlightedColumns =
+        activeContext.highlightedByTable.get(table.name) ?? EMPTY_HIGHLIGHTS;
 
       return {
         id: table.name,
@@ -246,7 +272,7 @@ export function SchemaCanvas() {
         },
       };
     });
-  }, [model, layout, selectedTable, activeContext]);
+  }, [model, selectedTable, activeContext]);
 
   // Build edges from model.refs
   const initialEdges: Edge[] = useMemo(() => {

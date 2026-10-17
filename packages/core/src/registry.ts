@@ -48,11 +48,39 @@ export function getRegistryPath(): string {
   return resolve(getRegistryDir(), 'projects.json');
 }
 
+let registryCache: {
+  path: string;
+  mtimeMs: number;
+  size: number;
+  projects: RegisteredProject[];
+} | null = null;
+
+export function clearRegistryCache(): void {
+  registryCache = null;
+}
+
 export async function listProjects(): Promise<RegisteredProject[]> {
-  const content = await readIfExists(getRegistryPath());
-  if (!content) return [];
+  const regPath = getRegistryPath();
   try {
-    return RegistryData.parse(JSON.parse(content));
+    const s = await stat(regPath);
+    if (
+      registryCache &&
+      registryCache.path === regPath &&
+      registryCache.mtimeMs === s.mtimeMs &&
+      registryCache.size === s.size
+    ) {
+      return registryCache.projects.map((p) => ({ ...p }));
+    }
+    const content = await readIfExists(regPath);
+    if (!content) return [];
+    const parsed = RegistryData.parse(JSON.parse(content));
+    registryCache = {
+      path: regPath,
+      mtimeMs: s.mtimeMs,
+      size: s.size,
+      projects: parsed,
+    };
+    return parsed.map((p) => ({ ...p }));
   } catch {
     return [];
   }
@@ -85,6 +113,7 @@ export async function registerProject(project: {
     projects.push(entry);
   }
 
+  registryCache = null;
   await atomicWrite(getRegistryPath(), JSON.stringify(projects, null, 2) + '\n');
   return entry;
 }
@@ -95,6 +124,7 @@ export async function unregisterProject(id: string): Promise<boolean> {
   if (filtered.length === projects.length) {
     return false;
   }
+  registryCache = null;
   await atomicWrite(getRegistryPath(), JSON.stringify(filtered, null, 2) + '\n');
   return true;
 }

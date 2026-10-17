@@ -33,7 +33,7 @@ export function SchemaPage({
         try {
           const data = JSON.parse(event.data);
           if (data.type === 'sync') {
-            syncIfNeeded();
+            syncIfNeeded(data.fingerprint);
           }
         } catch {
           // ignore

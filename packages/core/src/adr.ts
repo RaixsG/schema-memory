@@ -182,6 +182,42 @@ export function renderAdrMarkdown(options: {
   return sections.join('\n') + '\n';
 }
 
+export async function countAdrsStatus(
+  projectPath: string
+): Promise<{ totalAdrs: number; unconfirmedAdrs: number }> {
+  const dir = getAdrDir(projectPath);
+  let files: string[] = [];
+  try {
+    files = await readdir(dir);
+  } catch {
+    return { totalAdrs: 0, unconfirmedAdrs: 0 };
+  }
+
+  const mdFiles = files.filter((f) => f.endsWith('.md'));
+  if (mdFiles.length === 0) {
+    return { totalAdrs: 0, unconfirmedAdrs: 0 };
+  }
+
+  const contents = await Promise.all(
+    mdFiles.map((file) => readIfExists(resolve(dir, file)))
+  );
+
+  let totalAdrs = 0;
+  let unconfirmedAdrs = 0;
+
+  for (const raw of contents) {
+    if (!raw) continue;
+    totalAdrs += 1;
+    const { frontmatter } = parseFrontmatter(raw);
+    const status = frontmatter['status'] || 'confirmado';
+    if (status !== 'confirmado') {
+      unconfirmedAdrs += 1;
+    }
+  }
+
+  return { totalAdrs, unconfirmedAdrs };
+}
+
 export async function listAdrs(
   projectPath: string,
   filter?: {
@@ -191,7 +227,6 @@ export async function listAdrs(
   }
 ): Promise<ParsedAdr[]> {
   const dir = getAdrDir(projectPath);
-  await ensureDir(dir);
 
   let files: string[] = [];
   try {
@@ -201,10 +236,22 @@ export async function listAdrs(
   }
 
   const mdFiles = files.filter((f) => f.endsWith('.md')).sort();
-  const adrs: ParsedAdr[] = [];
+  if (mdFiles.length === 0) {
+    return [];
+  }
 
-  for (const file of mdFiles) {
-    const raw = await readIfExists(resolve(dir, file));
+  const rawContents = await Promise.all(
+    mdFiles.map((file) => readIfExists(resolve(dir, file)))
+  );
+
+  const adrs: ParsedAdr[] = [];
+  const filterTable = filter?.table?.toLowerCase();
+  const filterTarget =
+    filterTable && filter?.column
+      ? `${filterTable}.${filter.column.toLowerCase()}`
+      : undefined;
+
+  for (const raw of rawContents) {
     if (!raw) continue;
     try {
       const parsed = parseAdrFile(raw);
@@ -213,19 +260,17 @@ export async function listAdrs(
         continue;
       }
 
-      if (filter?.table) {
-        const table = filter.table.toLowerCase();
+      if (filterTable) {
         const hasTable = parsed.metadata.affects.some((a) => {
           const lower = a.toLowerCase();
-          return lower === table || lower.startsWith(`${table}.`);
+          return lower === filterTable || lower.startsWith(`${filterTable}.`);
         });
         if (!hasTable) continue;
       }
 
-      if (filter?.column && filter?.table) {
-        const target = `${filter.table.toLowerCase()}.${filter.column.toLowerCase()}`;
+      if (filterTarget) {
         const hasCol = parsed.metadata.affects.some(
-          (a) => a.toLowerCase() === target
+          (a) => a.toLowerCase() === filterTarget
         );
         if (!hasCol) continue;
       }
@@ -243,20 +288,57 @@ export async function readAdr(
   projectPath: string,
   id: string
 ): Promise<ParsedAdr | null> {
+  const dir = getAdrDir(projectPath);
+  let files: string[] = [];
+  try {
+    files = await readdir(dir);
+  } catch {
+    return null;
+  }
+
+  const mdFiles = files.filter((f) => f.endsWith('.md')).sort();
+  const directMatch = mdFiles.find(
+    (f) => f.startsWith(`${id}-`) || f === `${id}.md`
+  );
+
+  if (directMatch) {
+    const raw = await readIfExists(resolve(dir, directMatch));
+    if (raw) {
+      try {
+        const parsed = parseAdrFile(raw);
+        if (parsed.metadata.id === id) {
+          return parsed;
+        }
+      } catch {
+        // fallback below
+      }
+    }
+  }
+
   const adrs = await listAdrs(projectPath);
   const found = adrs.find((a) => a.metadata.id === id);
   return found || null;
 }
 
 export async function nextAdrId(projectPath: string): Promise<string> {
-  const adrs = await listAdrs(projectPath);
+  const dir = getAdrDir(projectPath);
+  let files: string[] = [];
+  try {
+    files = await readdir(dir);
+  } catch {
+    return '0001';
+  }
+
   let maxId = 0;
-  for (const a of adrs) {
-    const num = parseInt(a.metadata.id, 10);
+  for (const file of files) {
+    if (!file.endsWith('.md')) continue;
+    const prefix = file.split('-')[0]?.replace(/\.md$/, '') || '';
+    const num = parseInt(prefix, 10);
     if (!isNaN(num) && num > maxId) {
       maxId = num;
     }
   }
+
   return String(maxId + 1).padStart(4, '0');
 }
 

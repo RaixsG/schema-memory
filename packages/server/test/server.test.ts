@@ -3,6 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createApp } from '../src/app.js';
+import { gzipBuffer } from '@schema-memory/core';
 
 describe('M5: Server REST API and Security', () => {
   let tempHome: string;
@@ -90,14 +91,23 @@ describe('M5: Server REST API and Security', () => {
       expect(list2.projects.length).toBe(1);
       expect(list2.projects[0].id).toBe('rest-project');
 
-      // 5. Schema endpoint
+      // 5. Schema endpoint (with ETag and bundled pending + fingerprint)
       const schemaRes = await app.request('/api/projects/rest-project/schema', {
         headers: localHeaders,
       });
       expect(schemaRes.status).toBe(200);
+      const etag = schemaRes.headers.get('etag');
+      expect(etag).toBeTruthy();
       const schemaData = await schemaRes.json();
       expect(schemaData.id).toBe('rest-project');
       expect(schemaData.model).toBeDefined();
+      expect(typeof schemaData.fingerprint).toBe('string');
+
+      // 5b. Conditional GET with If-None-Match returns 304 Not Modified
+      const schema304Res = await app.request('/api/projects/rest-project/schema', {
+        headers: { ...localHeaders, 'if-none-match': etag! },
+      });
+      expect(schema304Res.status).toBe(304);
 
       // 6. Update layout
       const layoutRes = await app.request('/api/projects/rest-project/layout', {
@@ -116,19 +126,26 @@ describe('M5: Server REST API and Security', () => {
       expect(typeof syncData1.fingerprint).toBe('string');
       expect(syncData1.hasPending).toBe(false);
 
-      // 7. Put pending change
+      // 7. Put pending change (using Content-Encoding: gzip compressed request body)
       const pendingDbml = 'Table users {\n  id int [pk]\n  name varchar\n}\n';
+      const compressedBody = await gzipBuffer(
+        JSON.stringify({ proposedDbml: pendingDbml })
+      );
       const putPendingRes = await app.request(
         '/api/projects/rest-project/pending',
         {
           method: 'PUT',
-          headers: localHeaders,
-          body: JSON.stringify({ proposedDbml: pendingDbml }),
+          headers: {
+            ...localHeaders,
+            'content-encoding': 'gzip',
+          },
+          body: new Uint8Array(compressedBody),
         }
       );
       expect(putPendingRes.status).toBe(200);
       const putPendingData = await putPendingRes.json();
       expect(putPendingData.details.changes.length).toBe(1);
+      expect(typeof putPendingData.fingerprint).toBe('string');
 
       // 7b. Sync fingerprint after pending change should differ
       const syncRes2 = await app.request('/api/projects/rest-project/sync', {

@@ -1,31 +1,28 @@
-import { useEffect, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useSchemaStore } from '../store';
-import { api } from '../api';
-import { AdrItem } from '../types';
 import { X, BookOpen, ChevronDown, ChevronRight } from 'lucide-react';
 
 export function DecisionsDrawer() {
   const activeDrawer = useSchemaStore((s) => s.activeDrawer);
   const setActiveDrawer = useSchemaStore((s) => s.setActiveDrawer);
-  const projectId = useSchemaStore((s) => s.projectId);
   const selectedTable = useSchemaStore((s) => s.selectedTable);
+  const allAdrs = useSchemaStore((s) => s.adrs);
 
-  const [adrs, setAdrs] = useState<AdrItem[]>([]);
   const [filterByTable, setFilterByTable] = useState(true);
   const [expandedId, setExpandedId] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
 
-  useEffect(() => {
-    if (activeDrawer === 'decisions' && projectId) {
-      setLoading(true);
-      const params = filterByTable && selectedTable ? { table: selectedTable } : undefined;
-      api
-        .getAdrs(projectId, params)
-        .then((data) => setAdrs(data.adrs))
-        .catch(console.error)
-        .finally(() => setLoading(false));
-    }
-  }, [activeDrawer, projectId, selectedTable, filterByTable]);
+  const adrs = useMemo(() => {
+    if (!filterByTable || !selectedTable) return allAdrs;
+    const lower = selectedTable.toLowerCase();
+    return allAdrs.filter((adr) =>
+      adr.metadata.affects.some((a) => {
+        const aff = a.toLowerCase();
+        return aff === lower || aff.startsWith(`${lower}.`);
+      })
+    );
+  }, [allAdrs, filterByTable, selectedTable]);
+
+  const loading = false;
 
   if (activeDrawer !== 'decisions') return null;
 

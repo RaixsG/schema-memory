@@ -63,7 +63,9 @@ export const api = {
       dbml: string;
       model: SchemaModel;
       pendingModel?: SchemaModel | null;
+      pending?: PendingDetails | null;
       layout: Record<string, { x: number; y: number }>;
+      fingerprint?: string;
     }>(`/api/projects/${id}/schema`),
 
   getProjectSync: (id: string) =>
@@ -83,7 +85,7 @@ export const api = {
     req<{ pending: PendingDetails | null }>(`/api/projects/${id}/pending`),
 
   savePending: (id: string, data: { proposedDbml?: string; model?: SchemaModel; note?: string }) =>
-    req<{ details: PendingDetails }>(`/api/projects/${id}/pending`, {
+    req<{ details: PendingDetails; fingerprint?: string }>(`/api/projects/${id}/pending`, {
       method: 'PUT',
       body: JSON.stringify(data),
     }),
