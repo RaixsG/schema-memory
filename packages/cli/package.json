@@ -50,12 +50,12 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@schema-memory/core": "workspace:*",
-    "@schema-memory/mcp": "workspace:*",
-    "@schema-memory/server": "workspace:*",
     "commander": "^13.1.0"
   },
   "devDependencies": {
+    "@schema-memory/core": "workspace:*",
+    "@schema-memory/mcp": "workspace:*",
+    "@schema-memory/server": "workspace:*",
     "typescript": "^5.7.3",
     "tsup": "^8.3.6",
     "vitest": "^3.0.5"
