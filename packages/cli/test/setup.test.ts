@@ -176,20 +176,47 @@ describe('Universal Setup Helpers (OpenCode, Antigravity & Doctor)', () => {
     }
   });
 
-  it('detects ephemeral npx / dlx installs', () => {
-    expect(
-      isEphemeralInstall(
-        'C:\\Users\\ana\\AppData\\Local\\npm-cache\\_npx\\abc123\\node_modules\\schema-memory\\dist\\index.js'
-      )
-    ).toBe(true);
-    expect(
-      isEphemeralInstall('/home/ana/.pnpm-store/v3/tmp/dlx-1234/node_modules/schema-memory/dist/index.js')
-    ).toBe(true);
-    expect(
-      isEphemeralInstall(
-        '/usr/local/lib/node_modules/schema-memory/dist/index.js'
-      )
-    ).toBe(false);
+  it('detects ephemeral npx / bunx / dlx installs and registers stable runner MCP commands', async () => {
+    const npxPath =
+      'C:\\Users\\ana\\AppData\\Local\\npm-cache\\_npx\\abc123\\node_modules\\schema-memory\\dist\\index.js';
+    const bunxPath =
+      '/Users/ana/.bun/install/cache/schema-memory@0.1.1@@@1/dist/index.js';
+    const dlxPath =
+      '/home/ana/.pnpm-store/v3/tmp/dlx-1234/node_modules/schema-memory/dist/index.js';
+    const globalPath =
+      '/usr/local/lib/node_modules/schema-memory/dist/index.js';
+
+    expect(isEphemeralInstall(npxPath)).toBe(true);
+    expect(isEphemeralInstall(bunxPath)).toBe(true);
+    expect(isEphemeralInstall(dlxPath)).toBe(true);
+    expect(isEphemeralInstall(globalPath)).toBe(false);
+
+    // npx registers `npx -y schema-memory mcp` instead of temporary cache path
+    const ocNpx = JSON.parse(mergeOpenCodeConfig(null, npxPath));
+    expect(ocNpx.mcp.servers['schema-memory'].command).toEqual([
+      'npx',
+      '-y',
+      'schema-memory',
+      'mcp',
+    ]);
+    const agyNpx = JSON.parse(mergeAntigravityMcpConfig(null, npxPath));
+    expect(agyNpx.mcpServers['schema-memory-mcp']).toEqual({
+      command: 'npx',
+      args: ['-y', 'schema-memory', 'mcp'],
+    });
+
+    // bunx registers `bunx schema-memory mcp` instead of temporary cache path
+    const ocBunx = JSON.parse(mergeOpenCodeConfig(null, bunxPath));
+    expect(ocBunx.mcp.servers['schema-memory'].command).toEqual([
+      'bunx',
+      'schema-memory',
+      'mcp',
+    ]);
+    const agyBunx = JSON.parse(mergeAntigravityMcpConfig(null, bunxPath));
+    expect(agyBunx.mcpServers['schema-memory-mcp']).toEqual({
+      command: 'bunx',
+      args: ['schema-memory', 'mcp'],
+    });
   });
 
   it('isWithinDir respects path boundaries', () => {

@@ -61,19 +61,39 @@ export function isWithinDir(targetPath: string, dir: string): boolean {
   return target.startsWith(base);
 }
 
+export type EphemeralRunner = 'npx' | 'bunx' | 'pnpm-dlx';
+
+/**
+ * Identifies which ephemeral package runner (npx, bunx, pnpm dlx) launched the CLI,
+ * or returns null when running from a permanent global/local installation.
+ */
+export function detectEphemeralRunner(cliPath: string): EphemeralRunner | null {
+  const normalized = cliPath.toLowerCase().replace(/\\/g, '/');
+  if (
+    normalized.includes('/.bun/install/cache/') ||
+    normalized.includes('/bunx/')
+  ) {
+    return 'bunx';
+  }
+  if (
+    normalized.includes('/pnpm/dlx/') ||
+    normalized.includes('/dlx-') ||
+    normalized.includes('/.pnpm-store/')
+  ) {
+    return 'pnpm-dlx';
+  }
+  if (
+    normalized.includes('/_npx/') ||
+    normalized.includes('/npm-cache/_npx')
+  ) {
+    return 'npx';
+  }
+  return null;
+}
+
 /** True when the CLI is running from a throwaway cache directory (npx / pnpm dlx / bunx). */
 export function isEphemeralInstall(cliPath: string): boolean {
-  const normalized = cliPath.toLowerCase().replace(/\\/g, '/');
-  const markers = [
-    '/_npx/',
-    '/npm-cache/_npx',
-    '/.pnpm-store/',
-    '/pnpm/dlx/',
-    '/dlx-',
-    '/.bun/install/cache/',
-    '/bunx/',
-  ];
-  return markers.some((marker) => normalized.includes(marker));
+  return detectEphemeralRunner(cliPath) !== null;
 }
 
 /** True when a previous `sm setup` fallback shim exists in `binDir`. */

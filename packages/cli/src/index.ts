@@ -64,7 +64,9 @@ async function offerFirstRunSetup(): Promise<void> {
   if (normalized === '' || normalized === 'y' || normalized === 'yes') {
     await setupCommand({ target: 'all' });
   } else {
-    console.log('   Skipped. Run "sm setup" anytime to configure your agents.\n');
+    console.log(
+      '   Skipped. Run "sm setup" (or "npx schema-memory setup" / "bunx schema-memory setup") anytime to configure your agents.\n'
+    );
   }
 }
 

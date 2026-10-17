@@ -2,8 +2,10 @@
 
 > **Memoria canónica de esquemas de base de datos, flujo de Architecture Decision Records (ADRs) y compañero de pair programming para desarrolladores freelance que trabajan con asistentes de IA.**
 
+[![npm](https://img.shields.io/npm/v/schema-memory.svg)](https://www.npmjs.com/package/schema-memory)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.7-blue.svg)](https://www.typescriptlang.org/)
-[![Node](https://img.shields.io/badge/Node.js-%3E%3D20.0-green.svg)](https://nodejs.org/)
+[![Node](https://img.shields.io/badge/Node.js-%3E%3D20.5-green.svg)](https://nodejs.org/)
+[![Bun](https://img.shields.io/badge/Bun-%3E%3D1.1-f472b6.svg)](https://bun.sh/)
 [![pnpm](https://img.shields.io/badge/pnpm-9.x-orange.svg)](https://pnpm.io/)
 [![Zero Docker](https://img.shields.io/badge/Docker-0%20(Not%20Required)-success.svg)](#stack-tecnol%C3%B3gico)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
@@ -127,17 +129,39 @@ Aplicación web moderna tipo SPA (Single Page Application):
 ## 4. Guía de Inicio Rápido
 
 ### Requisitos Previos
-- **Node.js** v20 o superior (recomendado v22, probado en v22.22.0).
-- Un gestor de paquetes: **npm** (incluido con Node), **pnpm** v9+ o **bun**.
+- **Node.js** v20.5+ (recomendado v22) o **Bun** v1.1+.
+- Gestor/ejecutor de paquetes: **npm / npx**, **bun / bunx**, o **pnpm**.
 
-### Opción A: Instalar el CLI global desde npm (Recomendado para uso diario)
+### Opción A: Ejecución Directa con `npx` o `bunx` (Sin instalar / Recomendado por npm)
 
-Funciona igual en **macOS, Linux y Windows**:
+Siguiendo la [recomendación oficial de npm](https://docs.npmjs.com/downloading-and-installing-packages-globally) y [Bun](https://bun.com/docs/pm/bunx), puedes ejecutar `schema-memory` directamente sin instalar paquetes globales:
 
 ```bash
-# 1. Instalar el CLI globalmente (registra los comandos sm y schema-memory)
+# Con npm (npx)
+npx schema-memory
+
+# Con Bun (bunx)
+bunx schema-memory
+
+# Con pnpm
+pnpm dlx schema-memory
+```
+
+- **Primera ejecución**: si aún no configuraste tus agentes, te ofrecerá ejecutar `setup` automáticamente y registrará el servidor MCP usando `npx -y schema-memory mcp` o `bunx schema-memory mcp` (inmune a limpiezas de caché).
+- **Configurar agentes directamente**: `npx schema-memory setup` o `bunx schema-memory setup`.
+- **Diagnóstico**: `npx schema-memory doctor` o `bunx schema-memory doctor`.
+
+### Opción B: Instalar el CLI global `sm` (`npm` o `bun`)
+
+Si prefieres tener el comando corto **`sm`** disponible al instante en tu terminal en **macOS, Linux y Windows**:
+
+```bash
+# 1. Instalar globalmente con npm, Bun o pnpm
 npm i -g schema-memory
-# alternativas: pnpm add -g schema-memory · bun add -g schema-memory
+# o con Bun:
+bun add -g schema-memory
+# o con pnpm:
+pnpm add -g schema-memory
 
 # 2. Configurar tus agentes (OpenCode, Antigravity y skills) — idempotente
 sm setup
@@ -146,14 +170,13 @@ sm setup
 sm
 ```
 
-- **Primera ejecución**: si aún no configuraste nada, `sm` te ofrecerá ejecutar `sm setup` automáticamente.
-- **Sin instalar**: puedes probarlo con `npx schema-memory@latest`, pero para el registro MCP usa siempre una **instalación global** (npx usa una ruta temporal que se limpia).
-- **Diagnóstico**: verifica todo en cualquier momento con `sm doctor`.
+> [!TIP]
+> **Nota sobre `npm i schema-memory` vs `npx` / `-g`**: El comando `npm i schema-memory` (sin `-g`) que muestra por defecto la barra lateral de `npmjs.com` instala el paquete solo dentro de la carpeta `./node_modules` de un proyecto. Como `schema-memory` es una herramienta CLI y servidor MCP multi-proyecto, úsalo siempre con **`npx schema-memory` / `bunx schema-memory`** o instálalo globalmente con **`npm i -g schema-memory` / `bun add -g schema-memory`**.
 
 > [!NOTE]
-> **Windows**: el explorador de carpetas de la UI puede navegar por todas tus unidades (`C:`, `D:`, `E:`, …), el registro MCP funciona con rutas absolutas y no se requieren permisos de administrador ni Developer Mode.
+> **Windows**: el explorador de carpetas de la UI puede navegar por todas tus unidades (`C:`, `D:`, `E:`, …), el registro MCP funciona automáticamente y no se requieren permisos de administrador ni Developer Mode.
 
-### Opción B: Desde el repositorio (desarrollo)
+### Opción C: Desde el repositorio (desarrollo)
 
 ```bash
 # 1. Clonar el repositorio y situarse en la carpeta
@@ -176,7 +199,7 @@ Tienes dos opciones según lo que necesites:
 Un solo comando levanta el servidor backend y abre automáticamente la interfaz web en **`http://127.0.0.1:4317`**:
 ```bash
 pnpm ui
-# (o simplemente `sm` si instalaste el CLI global con `npm i -g schema-memory`)
+# (o `sm` / `npx schema-memory` / `bunx schema-memory`)
 ```
 
 #### Modo Desarrollo con Hot-Reload
@@ -190,49 +213,56 @@ Este comando orquesta concurrentemente:
 
 ---
 
-## 5. Comandos CLI Simplificados (`pnpm` y `sm`)
+## 5. Comandos CLI (`npx` / `bunx`, `sm` global y `pnpm`)
 
-### 5.1 Activar comando corto global `sm` (Recomendado)
-La forma estándar y multiplataforma es instalar el paquete global con tu gestor de paquetes:
+### 5.1 Opciones de Instalación Global o Ejecución Directa
 ```bash
-npm i -g schema-memory   # o: pnpm add -g schema-memory · bun add -g schema-memory
+# Ejecución directa sin instalar:
+npx schema-memory          # npm
+bunx schema-memory         # Bun
+pnpm dlx schema-memory     # pnpm
+
+# O instalación global del comando corto `sm`:
+npm i -g schema-memory     # npm
+bun add -g schema-memory   # Bun (alias: bun i -g schema-memory)
+pnpm add -g schema-memory  # pnpm
 ```
-Esto registra los comandos `sm` y `schema-memory` en el PATH en **macOS, Linux y Windows** (shims `.cmd`/`.ps1` nativos en Windows, gestionados por el propio gestor).
+La instalación global registra los comandos `sm` y `schema-memory` en el PATH en **macOS, Linux y Windows** (shims `.cmd`/`.ps1` nativos en Windows).
 
 Si trabajas desde este repositorio y quieres enlazar el build local:
 ```bash
 pnpm link-cli
 ```
-Esto crea/enlaza `sm` y `schema-memory` en `~/.local/bin/` (symlink en Unix, shims `.cmd`/`.ps1` en Windows). Si `~/.local/bin` no está en tu PATH, el comando te indicará cómo añadirlo. Si `sm` ya está instalado globalmente, el enlace se omite automáticamente.
+Esto crea/enlaza `sm` y `schema-memory` en `~/.local/bin/` (symlink en Unix, shims `.cmd`/`.ps1` en Windows).
 
-### 5.2 Uso con `sm` (Desde cualquier carpeta) vs `pnpm` (Desde este repo)
+### 5.2 Tabla de Comandos Equivalentes
 
-| Acción | Con `sm` global | Con `pnpm` desde este repo |
-| :--- | :--- | :--- |
-| **Abrir la interfaz web** | `sm` *(o `sm ui`)* | `pnpm ui` *(o `pnpm start`)* |
-| **Vincular carpeta actual** | `sm init` *(dentro del proyecto)* | — |
-| **Vincular proyecto por ruta** | `sm add /ruta/al/proyecto` | `pnpm sm add /ruta/al/proyecto` |
-| **Ver proyectos y estado** | `sm ls` *(o `sm status`)* | `pnpm status` *(o `pnpm sm ls`)* |
-| **Desvincular proyecto** | `sm rm` *(en la carpeta)* o `sm rm <id>` | `pnpm sm rm <id>` |
-| **Configuración Global Multi-Agente** | `sm setup` | `pnpm sm setup` *(o `pnpm run setup`)* |
-| **Diagnóstico de salud (`doctor`)** | `sm doctor` | `pnpm sm doctor` *(o `pnpm run doctor`)* |
-| **Configurar solo OpenCode** | `sm setup --target opencode` | `pnpm sm setup --target opencode` |
-| **Configurar solo Antigravity** | `sm setup --target antigravity` | `pnpm sm setup --target antigravity` |
-| **Previsualizar configuración** | `sm setup --print` | `pnpm sm setup --print` |
-| **Ayuda de comandos** | `sm --help` | `pnpm sm --help` |
+| Acción | Sin instalar (`npx` / `bunx`) | Con `sm` global (`-g`) | Desde este repo (`pnpm`) |
+| :--- | :--- | :--- | :--- |
+| **Abrir la interfaz web** | `npx schema-memory` / `bunx schema-memory` | `sm` *(o `sm ui`)* | `pnpm ui` *(o `pnpm start`)* |
+| **Vincular carpeta actual** | `npx schema-memory init` / `bunx schema-memory init` | `sm init` | — |
+| **Vincular proyecto por ruta** | `npx schema-memory add /ruta` | `sm add /ruta` | `pnpm sm add /ruta` |
+| **Ver proyectos y estado** | `npx schema-memory ls` / `bunx schema-memory ls` | `sm ls` *(o `sm status`)* | `pnpm status` *(o `pnpm sm ls`)* |
+| **Desvincular proyecto** | `npx schema-memory rm <id>` | `sm rm` o `sm rm <id>` | `pnpm sm rm <id>` |
+| **Configuración Global Multi-Agente** | `npx schema-memory setup` / `bunx schema-memory setup` | `sm setup` | `pnpm sm setup` |
+| **Diagnóstico de salud (`doctor`)** | `npx schema-memory doctor` / `bunx schema-memory doctor` | `sm doctor` | `pnpm sm doctor` |
+| **Configurar solo OpenCode** | `npx schema-memory setup --target opencode` | `sm setup --target opencode` | `pnpm sm setup --target opencode` |
+| **Configurar solo Antigravity** | `npx schema-memory setup --target antigravity` | `sm setup --target antigravity` | `pnpm sm setup --target antigravity` |
+| **Previsualizar configuración** | `npx schema-memory setup --print` | `sm setup --print` | `pnpm sm setup --print` |
+| **Ayuda de comandos** | `npx schema-memory --help` | `sm --help` | `pnpm sm --help` |
 
 > [!NOTE]
-> Nota sobre `pnpm`: los comandos `pnpm setup` y `pnpm doctor` (sin `sm` ni `run`) son subcomandos internos del propio gestor `pnpm`. Usa siempre **`sm setup` / `sm doctor`** o **`pnpm sm setup` / `pnpm sm doctor`**.
+> Nota sobre `pnpm`: los comandos `pnpm setup` y `pnpm doctor` (sin `sm` ni `run`) son subcomandos internos del propio gestor `pnpm`. Usa siempre **`sm setup` / `sm doctor`**, **`npx schema-memory setup`**, **`bunx schema-memory setup`** o **`pnpm sm setup`**.
 
-### 5.3 ¿Qué instala `sm setup` (`pnpm sm setup`)?
-`schema-memory` es **100% agnóstico de agente**. Al ejecutar `sm setup` (por defecto `--target all`), configura de manera no destructiva (haciendo *merge* sin borrar tu configuración previa):
+### 5.3 ¿Qué instala `setup` (`sm setup` / `npx schema-memory setup` / `bunx schema-memory setup`)?
+`schema-memory` es **100% agnóstico de agente**. Al ejecutar `setup` (por defecto `--target all`), configura de manera no destructiva (haciendo *merge* sin borrar tu configuración previa):
 1. **Estándar Abierto Global (`~/.agents/skills/schema-memory/SKILL.md`)**: Leído automáticamente por **OpenCode** y agentes compatibles con el estándar Agent Skills.
 2. **OpenCode Nativo (`~/.config/opencode/`)**:
-   - Inyecta el servidor MCP `schema-memory` dentro de `~/.config/opencode/opencode.json` con el **formato nativo de OpenCode V2** (`mcp.servers.schema-memory`), respetando tus proveedores, temas y otros MCPs existentes. Las entradas antiguas en formato V1 de `schema-memory` se migran automáticamente.
+   - Inyecta el servidor MCP `schema-memory` dentro de `~/.config/opencode/opencode.json` con el **formato nativo de OpenCode V2** (`mcp.servers.schema-memory`), usando `npx -y schema-memory mcp` / `bunx schema-memory mcp` (si se ejecutó con `npx`/`bunx`) o la ruta directa del binario global.
    - Añade el bloque delimitado en `~/.config/opencode/AGENTS.md` y el skill en `~/.config/opencode/skills/schema-memory/SKILL.md`.
 3. **Antigravity Directo + Plugin (`~/.gemini/config/`)**:
    - Registra `schema-memory-mcp` directamente en `~/.gemini/config/mcp_config.json` y la regla global en `~/.gemini/config/GEMINI.md` (activo sin necesidad de habilitar plugins manualmente), además del paquete en `~/.gemini/config/plugins/schema-memory/`.
-4. **CLI Global**: si `sm` ya está en tu PATH (instalación npm/pnpm), no toca nada; si no, crea shims en `~/.local/bin` (symlink en Unix, `.cmd`/`.ps1` en Windows) y te avisa si esa carpeta falta en el PATH.
+4. **CLI Global**: si se instaló globalmente o desde el repo, verifica/enlaza `sm` en el PATH; si se ejecutó vía `npx`/`bunx`, mantiene el flujo zero-install sin crear enlaces rotos a cachés temporales.
 5. **Actualización de Guardrails en Proyectos Registrados**: Refresca el bloque `AGENTS.md` de tus proyectos registrados con reglas de aislamiento estricto para que el agente nunca inspeccione el código fuente de `schema-memory`.
 
 ---

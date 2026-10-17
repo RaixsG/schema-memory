@@ -34,7 +34,7 @@ export async function runDoctorChecks(options?: {
       : `Missing "${cliDistPath}" — run "pnpm build"`,
   });
 
-  // 2. Global CLI command (npm/pnpm shims on PATH or fallback ~/.local/bin shims)
+  // 2. Global CLI command (npm/pnpm/bun shims on PATH or fallback ~/.local/bin shims)
   const smOnPath = findCommandOnPath('sm') ?? findCommandOnPath('schema-memory');
   const fallbackShim = fallbackShimExists(resolve(home, '.local', 'bin'));
   const smBinExists = smOnPath !== null || fallbackShim !== null;
@@ -45,14 +45,14 @@ export async function runDoctorChecks(options?: {
       ? `Resolved on PATH: ${smOnPath}`
       : fallbackShim
         ? fallbackShim
-        : 'Not linked — run "sm setup" or install globally with "npm i -g schema-memory"',
+        : 'Not linked globally (using npx/bunx, or run "npm i -g schema-memory" / "bun add -g schema-memory")',
   });
 
   // 3. OpenCode MCP (~/.config/opencode/opencode.json) — native V2 shape, V1 fallback
   const openCodeJsonPath = resolve(home, '.config', 'opencode', 'opencode.json');
   const openCodeRaw = await readIfExists(openCodeJsonPath);
   let openCodeOk = false;
-  let openCodeDetail = 'Not configured — run "sm setup"';
+  let openCodeDetail = 'Not configured — run "sm setup" (or "npx schema-memory setup" / "bunx schema-memory setup")';
   if (openCodeRaw) {
     try {
       const parsed = JSON.parse(openCodeRaw);
@@ -68,12 +68,18 @@ export async function runDoctorChecks(options?: {
       if (entry && !enabled) {
         openCodeDetail = `Entry exists in ${openCodeJsonPath} but is disabled`;
       } else if (entry && Array.isArray(entry.command)) {
-        const cmdPath = entry.command[1];
-        if (cmdPath && existsSync(cmdPath)) {
+        const bin = entry.command[0];
+        if (bin === 'npx' || bin === 'bunx' || bin === 'pnpm') {
           openCodeOk = true;
-          openCodeDetail = `${openCodeJsonPath} -> ${cmdPath}`;
+          openCodeDetail = `${openCodeJsonPath} -> ${entry.command.join(' ')}`;
         } else {
-          openCodeDetail = `Entry exists in ${openCodeJsonPath}, but target "${cmdPath}" does not exist`;
+          const cmdPath = entry.command[1];
+          if (cmdPath && existsSync(cmdPath)) {
+            openCodeOk = true;
+            openCodeDetail = `${openCodeJsonPath} -> ${cmdPath}`;
+          } else {
+            openCodeDetail = `Entry exists in ${openCodeJsonPath}, but target "${cmdPath}" does not exist`;
+          }
         }
       }
     } catch {
@@ -90,18 +96,24 @@ export async function runDoctorChecks(options?: {
   const agyMcpPath = resolve(home, '.gemini', 'config', 'mcp_config.json');
   const agyMcpRaw = await readIfExists(agyMcpPath);
   let agyOk = false;
-  let agyDetail = 'Not configured — run "sm setup"';
+  let agyDetail = 'Not configured — run "sm setup" (or "npx schema-memory setup" / "bunx schema-memory setup")';
   if (agyMcpRaw) {
     try {
       const parsed = JSON.parse(agyMcpRaw);
       const entry = parsed?.mcpServers?.['schema-memory-mcp'];
       if (entry && Array.isArray(entry.args)) {
-        const cmdPath = entry.args[0];
-        if (cmdPath && existsSync(cmdPath)) {
+        const bin = entry.command;
+        if (bin === 'npx' || bin === 'bunx' || bin === 'pnpm') {
           agyOk = true;
-          agyDetail = `${agyMcpPath} -> ${cmdPath}`;
+          agyDetail = `${agyMcpPath} -> ${bin} ${entry.args.join(' ')}`;
         } else {
-          agyDetail = `Entry exists in ${agyMcpPath}, but target "${cmdPath}" does not exist`;
+          const cmdPath = entry.args[0];
+          if (cmdPath && existsSync(cmdPath)) {
+            agyOk = true;
+            agyDetail = `${agyMcpPath} -> ${cmdPath}`;
+          } else {
+            agyDetail = `Entry exists in ${agyMcpPath}, but target "${cmdPath}" does not exist`;
+          }
         }
       }
     } catch {

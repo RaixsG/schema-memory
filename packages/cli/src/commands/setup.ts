@@ -16,7 +16,7 @@ import {
   findCommandOnPath,
   getBinDir,
   isDirOnPath,
-  isEphemeralInstall,
+  detectEphemeralRunner,
   isWithinDir,
 } from '../platform.js';
 
@@ -24,6 +24,31 @@ export type SetupTarget = 'all' | 'opencode' | 'antigravity' | 'agents';
 
 const START_MARKER = '<!-- schema-memory:start -->';
 const END_MARKER = '<!-- schema-memory:end -->';
+
+/**
+ * Resolves the MCP stdio invocation:
+ * - When executed via an ephemeral runner (npx, bunx, pnpm dlx), registers the
+ *   runner itself (`npx -y schema-memory mcp`, `bunx schema-memory mcp`, etc.)
+ *   so the agent config never points to a temporary cache folder.
+ * - When executed from a global install (`npm i -g` / `bun add -g`) or local
+ *   repo build, uses the direct `node <cliDistPath> mcp` entrypoint.
+ */
+export function buildMcpCommand(cliDistPath: string): {
+  command: string;
+  args: string[];
+} {
+  const runner = detectEphemeralRunner(cliDistPath);
+  if (runner === 'bunx') {
+    return { command: 'bunx', args: ['schema-memory', 'mcp'] };
+  }
+  if (runner === 'pnpm-dlx') {
+    return { command: 'pnpm', args: ['dlx', 'schema-memory', 'mcp'] };
+  }
+  if (runner === 'npx') {
+    return { command: 'npx', args: ['-y', 'schema-memory', 'mcp'] };
+  }
+  return { command: 'node', args: [cliDistPath, 'mcp'] };
+}
 
 /**
  * Merges the schema-memory MCP server into an OpenCode configuration file
@@ -61,9 +86,10 @@ export function mergeOpenCodeConfig(
   // Migrate our own legacy V1 flat entry (if any) to the native V2 shape.
   delete existingMcp['schema-memory'];
 
+  const mcpCmd = buildMcpCommand(cliDistPath);
   existingServers['schema-memory'] = {
     type: 'local',
-    command: ['node', cliDistPath, 'mcp'],
+    command: [mcpCmd.command, ...mcpCmd.args],
   };
 
   existingMcp.servers = existingServers;
@@ -92,11 +118,12 @@ export function mergeAntigravityMcpConfig(
       ? parsed.mcpServers
       : {};
 
+  const mcpCmd = buildMcpCommand(cliDistPath);
   parsed.mcpServers = {
     ...existingServers,
     'schema-memory-mcp': {
-      command: 'node',
-      args: [cliDistPath, 'mcp'],
+      command: mcpCmd.command,
+      args: mcpCmd.args,
     },
   };
 
@@ -182,12 +209,16 @@ function printPathHint(binDir: string): void {
     `\nℹ️  "${binDir}" is not on your PATH, so the "sm" command will not resolve in new terminals.`
   );
   if (isWindows) {
-    console.log('   Option A (recommended): install the CLI globally with "npm i -g schema-memory".');
+    console.log(
+      '   Option A (recommended): run via "npx schema-memory" / "bunx schema-memory", or install globally with "npm i -g schema-memory" / "bun add -g schema-memory".'
+    );
     console.log(
       '   Option B: add "%USERPROFILE%\\.local\\bin" to your user PATH via "Settings > System > About > Advanced system settings > Environment Variables".'
     );
   } else {
-    console.log('   Option A (recommended): install the CLI globally with "npm i -g schema-memory".');
+    console.log(
+      '   Option A (recommended): run via "npx schema-memory" / "bunx schema-memory", or install globally with "npm i -g schema-memory" / "bun add -g schema-memory".'
+    );
     console.log('   Option B: add the following to your shell profile (~/.zshrc, ~/.bashrc):');
     console.log(`     export PATH="${binDir}:$PATH"`);
   }
@@ -224,7 +255,7 @@ export async function setupCommand(options: {
     } catch (error: any) {
       throw new Error(
         `Could not link the global CLI: ${error.message}. ` +
-          'A cross-platform alternative is "npm i -g schema-memory", which installs the "sm" and "schema-memory" commands everywhere.'
+          'A cross-platform alternative is "npm i -g schema-memory" or "bun add -g schema-memory", which installs the "sm" and "schema-memory" commands everywhere.'
       );
     }
     return;
@@ -258,14 +289,14 @@ Always follow these 8 steps when touching database schemas in any registered cli
 ## Strict Isolation Guardrails
 - **Use ONLY MCP tools**: Interact with \`schema-memory\` exclusively through its MCP tools (\`schema-memory\` / \`schema-memory-mcp\`).
 - **NEVER inspect the schema-memory repository**: When working on a client project, NEVER search for, read, or analyze the \`schema-memory\` tool's own source code repository. Inspect only the client project's files.
-- **Fail-fast if MCP is missing**: If the MCP tools (\`get_schema\`, \`import_schema\`, \`get_pending_changes\`, etc.) are not available in your active session, STOP immediately without searching the filesystem and ask the user to run \`sm setup\` and reload the agent session.
+- **Fail-fast if MCP is missing**: If the MCP tools (\`get_schema\`, \`import_schema\`, \`get_pending_changes\`, etc.) are not available in your active session, STOP immediately without searching the filesystem and ask the user to run \`sm setup\` (or \`npx schema-memory setup\` / \`bunx schema-memory setup\`) and reload the agent session.
 `;
 
   const rulesContent = `# schema-memory Global Rule
 When working on a repository that contains \`.schema-memory/\` or references \`schema-memory\` in \`AGENTS.md\`:
 1. Call \`get_decisions\` and \`get_schema\` (passing \`project\`) before making or proposing any database schema change.
 2. Never write schema changes directly to code without recording decisions via \`confirm_change(userConfirmed=true)\`.
-3. **Strict Isolation**: Interact with \`schema-memory\` ONLY via its MCP tools (\`schema-memory\` / \`schema-memory-mcp\`). NEVER search for or read the \`schema-memory\` source code repository. If the MCP tools are not loaded in your current session, stop immediately and ask the user to run \`sm setup\` and reload the agent.
+3. **Strict Isolation**: Interact with \`schema-memory\` ONLY via its MCP tools (\`schema-memory\` / \`schema-memory-mcp\`). NEVER search for or read the \`schema-memory\` source code repository. If the MCP tools are not loaded in your current session, stop immediately and ask the user to run \`sm setup\` (or \`npx schema-memory setup\` / \`bunx schema-memory setup\`) and reload the agent.
 `;
 
   const pluginManifest = {
@@ -295,12 +326,13 @@ When working on a repository that contains \`.schema-memory/\` or references \`s
   const home = homedir();
   const installedTargets: string[] = [];
   const warnings: string[] = [];
+  const ephemeralRunner = detectEphemeralRunner(cliDistPath);
 
-  if (isEphemeralInstall(cliDistPath)) {
+  if (ephemeralRunner) {
+    const mcpCmd = buildMcpCommand(cliDistPath);
     console.log(
-      '\n⚠️  You are running schema-memory from a temporary npx/dlx cache. ' +
-        'The MCP registration will point to an ephemeral path.\n' +
-        '   Install it globally for a stable setup: npm i -g schema-memory && sm setup\n'
+      `\nℹ️  Detected ephemeral runner (${ephemeralRunner}). ` +
+        `Registering MCP via "${mcpCmd.command} ${mcpCmd.args.join(' ')}" so it stays valid across cache cleanups.`
     );
   }
 
@@ -380,17 +412,25 @@ When working on a repository that contains \`.schema-memory/\` or references \`s
     installedTargets.push(`Antigravity Plugin Bundle: ${agyPluginDir}`);
   }
 
-  // 4. Global CLI binary (skipped automatically when already on PATH)
-  try {
-    const link = await linkCliBinary(cliDistPath);
-    installedTargets.push(`Global CLI: ${link.detail}`);
-    if (link.linked && !isDirOnPath(link.binDir)) {
-      warnings.push(`Add "${link.binDir}" to PATH (or run "npm i -g schema-memory").`);
-    }
-  } catch (error: any) {
-    warnings.push(
-      `Could not link the global CLI (${error.message}). Use "npm i -g schema-memory" instead.`
+  // 4. Global CLI binary (skipped automatically when already on PATH or running via npx/bunx)
+  if (ephemeralRunner) {
+    installedTargets.push(
+      `Global CLI: running via ${ephemeralRunner} (optional global install: "npm i -g schema-memory" or "bun add -g schema-memory")`
     );
+  } else {
+    try {
+      const link = await linkCliBinary(cliDistPath);
+      installedTargets.push(`Global CLI: ${link.detail}`);
+      if (link.linked && !isDirOnPath(link.binDir)) {
+        warnings.push(
+          `Add "${link.binDir}" to PATH (or run "npm i -g schema-memory" / "bun add -g schema-memory").`
+        );
+      }
+    } catch (error: any) {
+      warnings.push(
+        `Could not link the global CLI (${error.message}). Use "npm i -g schema-memory" or "bun add -g schema-memory" instead.`
+      );
+    }
   }
 
   // 5. Refresh AGENTS.md managed block in already-registered client projects
@@ -420,10 +460,11 @@ When working on a repository that contains \`.schema-memory/\` or references \`s
   }
   if (warnings.length > 0 && isWindows) {
     console.log(
-      '\nℹ️  Tip: the simplest cross-platform install is "npm i -g schema-memory".'
+      '\nℹ️  Tip: the simplest cross-platform options are "npx schema-memory", "bunx schema-memory", "npm i -g schema-memory", or "bun add -g schema-memory".'
     );
   }
   console.log(
-    '\n💡 Tip: Run "sm doctor" anytime to verify your installation.\n'
+    '\n💡 Tip: Run "sm doctor" (or "npx schema-memory doctor" / "bunx schema-memory doctor") anytime to verify your installation.\n'
   );
 }
+
