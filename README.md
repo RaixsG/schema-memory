@@ -124,13 +124,37 @@ Aplicación web moderna tipo SPA (Single Page Application):
 
 ---
 
-## 4. Guía de Inicio Rápido: ¿Cómo Levantar el Proyecto?
+## 4. Guía de Inicio Rápido
 
 ### Requisitos Previos
 - **Node.js** v20 o superior (recomendado v22, probado en v22.22.0).
-- **pnpm** v9 o superior (`corepack enable` o `npm i -g pnpm`).
+- Un gestor de paquetes: **npm** (incluido con Node), **pnpm** v9+ o **bun**.
 
-### Instalación y Compilación Inicial
+### Opción A: Instalar el CLI global desde npm (Recomendado para uso diario)
+
+Funciona igual en **macOS, Linux y Windows**:
+
+```bash
+# 1. Instalar el CLI globalmente (registra los comandos sm y schema-memory)
+npm i -g schema-memory
+# alternativas: pnpm add -g schema-memory · bun add -g schema-memory
+
+# 2. Configurar tus agentes (OpenCode, Antigravity y skills) — idempotente
+sm setup
+
+# 3. Abrir la interfaz web local
+sm
+```
+
+- **Primera ejecución**: si aún no configuraste nada, `sm` te ofrecerá ejecutar `sm setup` automáticamente.
+- **Sin instalar**: puedes probarlo con `npx schema-memory@latest`, pero para el registro MCP usa siempre una **instalación global** (npx usa una ruta temporal que se limpia).
+- **Diagnóstico**: verifica todo en cualquier momento con `sm doctor`.
+
+> [!NOTE]
+> **Windows**: el explorador de carpetas de la UI puede navegar por todas tus unidades (`C:`, `D:`, `E:`, …), el registro MCP funciona con rutas absolutas y no se requieren permisos de administrador ni Developer Mode.
+
+### Opción B: Desde el repositorio (desarrollo)
+
 ```bash
 # 1. Clonar el repositorio y situarse en la carpeta
 cd schema-memory
@@ -144,18 +168,18 @@ pnpm build
 
 ---
 
-### Modos de Ejecución
+### Modos de Ejecución (desde el repositorio)
 
 Tienes dos opciones según lo que necesites:
 
-#### Opción A: Modo App Completa (Uso Diario / Recomendado)
+#### Modo App Completa (Uso Diario / Recomendado)
 Un solo comando levanta el servidor backend y abre automáticamente la interfaz web en **`http://127.0.0.1:4317`**:
 ```bash
 pnpm ui
-# (o `sm` si enlazaste el CLI global con `pnpm link-cli`)
+# (o simplemente `sm` si instalaste el CLI global con `npm i -g schema-memory`)
 ```
 
-#### Opción B: Modo Desarrollo con Hot-Reload
+#### Modo Desarrollo con Hot-Reload
 Si deseas modificar el código de la UI web o los estilos en tiempo real:
 ```bash
 pnpm dev
@@ -169,11 +193,17 @@ Este comando orquesta concurrentemente:
 ## 5. Comandos CLI Simplificados (`pnpm` y `sm`)
 
 ### 5.1 Activar comando corto global `sm` (Recomendado)
-Para poder usar `sm` desde **cualquier carpeta** de tu terminal sin escribir rutas largas:
+La forma estándar y multiplataforma es instalar el paquete global con tu gestor de paquetes:
+```bash
+npm i -g schema-memory   # o: pnpm add -g schema-memory · bun add -g schema-memory
+```
+Esto registra los comandos `sm` y `schema-memory` en el PATH en **macOS, Linux y Windows** (shims `.cmd`/`.ps1` nativos en Windows, gestionados por el propio gestor).
+
+Si trabajas desde este repositorio y quieres enlazar el build local:
 ```bash
 pnpm link-cli
 ```
-Esto crea el ejecutable `sm` (y `schema-memory`) en `~/.local/bin/`.
+Esto crea/enlaza `sm` y `schema-memory` en `~/.local/bin/` (symlink en Unix, shims `.cmd`/`.ps1` en Windows). Si `~/.local/bin` no está en tu PATH, el comando te indicará cómo añadirlo. Si `sm` ya está instalado globalmente, el enlace se omite automáticamente.
 
 ### 5.2 Uso con `sm` (Desde cualquier carpeta) vs `pnpm` (Desde este repo)
 
@@ -198,11 +228,11 @@ Esto crea el ejecutable `sm` (y `schema-memory`) en `~/.local/bin/`.
 `schema-memory` es **100% agnóstico de agente**. Al ejecutar `sm setup` (por defecto `--target all`), configura de manera no destructiva (haciendo *merge* sin borrar tu configuración previa):
 1. **Estándar Abierto Global (`~/.agents/skills/schema-memory/SKILL.md`)**: Leído automáticamente por **OpenCode** y agentes compatibles con el estándar Agent Skills.
 2. **OpenCode Nativo (`~/.config/opencode/`)**:
-   - Inyecta el servidor MCP `schema-memory` dentro de `~/.config/opencode/opencode.json` respetando tus proveedores, temas y otros MCPs existentes.
+   - Inyecta el servidor MCP `schema-memory` dentro de `~/.config/opencode/opencode.json` con el **formato nativo de OpenCode V2** (`mcp.servers.schema-memory`), respetando tus proveedores, temas y otros MCPs existentes. Las entradas antiguas en formato V1 de `schema-memory` se migran automáticamente.
    - Añade el bloque delimitado en `~/.config/opencode/AGENTS.md` y el skill en `~/.config/opencode/skills/schema-memory/SKILL.md`.
 3. **Antigravity Directo + Plugin (`~/.gemini/config/`)**:
    - Registra `schema-memory-mcp` directamente en `~/.gemini/config/mcp_config.json` y la regla global en `~/.gemini/config/GEMINI.md` (activo sin necesidad de habilitar plugins manualmente), además del paquete en `~/.gemini/config/plugins/schema-memory/`.
-4. **CLI Global (`~/.local/bin/sm`)**: Enlaza el comando `sm` en tu terminal.
+4. **CLI Global**: si `sm` ya está en tu PATH (instalación npm/pnpm), no toca nada; si no, crea shims en `~/.local/bin` (symlink en Unix, `.cmd`/`.ps1` en Windows) y te avisa si esa carpeta falta en el PATH.
 5. **Actualización de Guardrails en Proyectos Registrados**: Refresca el bloque `AGENTS.md` de tus proyectos registrados con reglas de aislamiento estricto para que el agente nunca inspeccione el código fuente de `schema-memory`.
 
 ---

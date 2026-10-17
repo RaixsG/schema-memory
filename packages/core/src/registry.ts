@@ -1,8 +1,32 @@
 import { homedir } from 'node:os';
-import { resolve, relative } from 'node:path';
+import { resolve, relative, isAbsolute, sep } from 'node:path';
 import { stat } from 'node:fs/promises';
 import { z } from 'zod';
 import { atomicWrite, readIfExists } from './fsx.js';
+
+/**
+ * Normalized path string used for equality comparisons.
+ * Windows filesystems are case-insensitive, so paths are lowercased there.
+ */
+export function normalizePathKey(targetPath: string): string {
+  const resolved = resolve(targetPath);
+  return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+}
+
+/**
+ * True when `child` is `parent` itself or a path nested inside it.
+ * Handles Windows drive-letter differences (where `relative()` returns an
+ * absolute path for unrelated drives) and same-drive parent traversals.
+ */
+export function isPathInside(parent: string, child: string): boolean {
+  const rel = relative(parent, child);
+  if (rel === '') return true;
+  if (isAbsolute(rel)) return false;
+  if (rel === '..') return false;
+  if (rel.startsWith(`..${sep}`)) return false;
+  if (rel.startsWith('../') || rel.startsWith('..\\')) return false;
+  return true;
+}
 
 export const RegisteredProject = z.object({
   id: z.string(),
@@ -42,9 +66,10 @@ export async function registerProject(project: {
   const projects = await listProjects();
   const normalizedPath = resolve(project.path);
   const now = new Date().toISOString();
+  const normalizedKey = normalizePathKey(normalizedPath);
 
   const existingIdx = projects.findIndex(
-    (p) => p.id === project.id || p.path === normalizedPath
+    (p) => p.id === project.id || normalizePathKey(p.path) === normalizedKey
   );
 
   const entry: RegisteredProject = {
@@ -103,9 +128,9 @@ export async function resolveProject(options: {
 
   // 1. By project parameter (matches id or exact path)
   if (project) {
-    const resolvedPath = resolve(project);
+    const projectKey = normalizePathKey(project);
     matched = projects.find(
-      (p) => p.id === project || p.path === resolvedPath
+      (p) => p.id === project || normalizePathKey(p.path) === projectKey
     );
     if (!matched) {
       throw new Error(`Project "${project}" not found in registry.`);
@@ -115,10 +140,7 @@ export async function resolveProject(options: {
   // 2. By CWD matching project path (or subpath)
   if (!matched && cwd) {
     const resolvedCwd = resolve(cwd);
-    const inCwd = projects.filter((p) => {
-      const rel = relative(p.path, resolvedCwd);
-      return !rel.startsWith('..') && !rel.startsWith('/');
-    });
+    const inCwd = projects.filter((p) => isPathInside(p.path, resolvedCwd));
 
     if (inCwd.length > 0) {
       // Pick the deepest match if nested

@@ -3,6 +3,7 @@ import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { existsSync } from 'node:fs';
 import { readIfExists, listProjects, readConfig } from '@schema-memory/core';
+import { findCommandOnPath, fallbackShimExists } from '../platform.js';
 
 export interface DoctorCheckResult {
   name: string;
@@ -33,27 +34,40 @@ export async function runDoctorChecks(options?: {
       : `Missing "${cliDistPath}" — run "pnpm build"`,
   });
 
-  // 2. Global CLI symlink (~/.local/bin/sm)
-  const smBinPath = resolve(home, '.local', 'bin', 'sm');
-  const smBinExists = existsSync(smBinPath);
+  // 2. Global CLI command (npm/pnpm shims on PATH or fallback ~/.local/bin shims)
+  const smOnPath = findCommandOnPath('sm') ?? findCommandOnPath('schema-memory');
+  const fallbackShim = fallbackShimExists(resolve(home, '.local', 'bin'));
+  const smBinExists = smOnPath !== null || fallbackShim !== null;
   results.push({
-    name: 'Global CLI (~/.local/bin/sm)',
+    name: 'Global CLI (sm)',
     ok: smBinExists,
-    detail: smBinExists
-      ? smBinPath
-      : 'Not linked — run "pnpm sm setup" or "pnpm link-cli"',
+    detail: smOnPath
+      ? `Resolved on PATH: ${smOnPath}`
+      : fallbackShim
+        ? fallbackShim
+        : 'Not linked — run "sm setup" or install globally with "npm i -g schema-memory"',
   });
 
-  // 3. OpenCode MCP (~/.config/opencode/opencode.json)
+  // 3. OpenCode MCP (~/.config/opencode/opencode.json) — native V2 shape, V1 fallback
   const openCodeJsonPath = resolve(home, '.config', 'opencode', 'opencode.json');
   const openCodeRaw = await readIfExists(openCodeJsonPath);
   let openCodeOk = false;
-  let openCodeDetail = 'Not configured — run "sm setup" (or "pnpm sm setup")';
+  let openCodeDetail = 'Not configured — run "sm setup"';
   if (openCodeRaw) {
     try {
       const parsed = JSON.parse(openCodeRaw);
-      const entry = parsed?.mcp?.['schema-memory'];
-      if (entry && entry.enabled !== false && Array.isArray(entry.command)) {
+      const v2Entry = parsed?.mcp?.servers?.['schema-memory'];
+      const v1Entry = parsed?.mcp?.['schema-memory'];
+      const entry = v2Entry ?? v1Entry;
+      const enabled = v2Entry
+        ? v2Entry.disabled !== true
+        : v1Entry
+          ? v1Entry.enabled !== false
+          : false;
+
+      if (entry && !enabled) {
+        openCodeDetail = `Entry exists in ${openCodeJsonPath} but is disabled`;
+      } else if (entry && Array.isArray(entry.command)) {
         const cmdPath = entry.command[1];
         if (cmdPath && existsSync(cmdPath)) {
           openCodeOk = true;
@@ -76,7 +90,7 @@ export async function runDoctorChecks(options?: {
   const agyMcpPath = resolve(home, '.gemini', 'config', 'mcp_config.json');
   const agyMcpRaw = await readIfExists(agyMcpPath);
   let agyOk = false;
-  let agyDetail = 'Not configured — run "sm setup" (or "pnpm sm setup")';
+  let agyDetail = 'Not configured — run "sm setup"';
   if (agyMcpRaw) {
     try {
       const parsed = JSON.parse(agyMcpRaw);
@@ -106,7 +120,7 @@ export async function runDoctorChecks(options?: {
   results.push({
     name: 'Universal Skill (~/.agents/skills)',
     ok: stdSkillExists,
-    detail: stdSkillExists ? stdSkillPath : 'Missing — run "sm setup" (or "pnpm sm setup")',
+    detail: stdSkillExists ? stdSkillPath : 'Missing — run "sm setup"',
   });
 
   // 6. Current Directory / Registered Projects
@@ -147,7 +161,7 @@ export async function doctorCommand(): Promise<void> {
     );
   } else {
     console.log(
-      '\n⚠️  Some checks failed. Run "sm setup" (or "pnpm sm setup") to fix global agent registration.\n'
+      '\n⚠️  Some checks failed. Run "sm setup" to fix global agent registration.\n'
     );
   }
 }

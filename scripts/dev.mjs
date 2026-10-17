@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 
+const isWindows = process.platform === 'win32';
 const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
 console.log('🚀 Starting schema-memory in development mode...\n');
@@ -16,12 +17,24 @@ const server = spawn('node', ['packages/server/dist/index.js'], {
 const web = spawn('pnpm', ['--filter', '@schema-memory/web', 'dev'], {
   cwd: rootDir,
   stdio: 'inherit',
+  shell: isWindows,
 });
+
+function killProcess(child) {
+  if (!child || child.killed) return;
+  if (isWindows) {
+    spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], {
+      stdio: 'ignore',
+    });
+  } else {
+    child.kill('SIGINT');
+  }
+}
 
 function cleanup() {
   console.log('\nStopping servers...');
-  server.kill('SIGINT');
-  web.kill('SIGINT');
+  killProcess(server);
+  killProcess(web);
   process.exit(0);
 }
 

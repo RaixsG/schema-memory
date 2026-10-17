@@ -1,4 +1,5 @@
 import { McpServer, ResourceTemplate } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { readFileSync } from 'node:fs';
 import { z } from 'zod';
 import {
   listProjects,
@@ -54,11 +55,24 @@ function errorResponse(message: string, code = 'ERROR') {
   };
 }
 
+function getServerVersion(): string {
+  // Prefer the package.json version; when bundled into the CLI this resolves
+  // to the CLI's own package.json.
+  try {
+    const pkgUrl = new URL('../package.json', import.meta.url);
+    const pkg = JSON.parse(readFileSync(pkgUrl, 'utf-8')) as { version?: string };
+    if (pkg.version) return pkg.version;
+  } catch {
+    // ignore and fall back below
+  }
+  return '0.0.0';
+}
+
 export function createMcpServer(): McpServer {
   const server = new McpServer(
     {
       name: 'schema-memory-mcp',
-      version: '0.1.0',
+      version: getServerVersion(),
     },
     {
       instructions: SERVER_INSTRUCTIONS,

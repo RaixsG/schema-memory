@@ -8,18 +8,26 @@ import {
   mergeGlobalAgentsMd,
 } from '../src/commands/setup.js';
 import { runDoctorChecks } from '../src/commands/doctor.js';
+import {
+  isEphemeralInstall,
+  isWithinDir,
+} from '../src/platform.js';
+
+const isWindows = process.platform === 'win32';
 
 describe('Universal Setup Helpers (OpenCode, Antigravity & Doctor)', () => {
-  it('creates a valid opencode.json when none exists', () => {
+  it('creates a valid opencode.json with the native V2 MCP shape when none exists', () => {
     const result = mergeOpenCodeConfig(null, '/abs/path/cli/dist/index.js');
     const parsed = JSON.parse(result);
 
     expect(parsed.$schema).toBe('https://opencode.ai/config.json');
-    expect(parsed.mcp['schema-memory']).toEqual({
+    expect(parsed.mcp.servers['schema-memory']).toEqual({
       type: 'local',
       command: ['node', '/abs/path/cli/dist/index.js', 'mcp'],
-      enabled: true,
     });
+    // V2 does not accept an `enabled` field
+    expect(parsed.mcp.servers['schema-memory'].enabled).toBeUndefined();
+    expect(parsed.mcp['schema-memory']).toBeUndefined();
   });
 
   it('preserves existing providers, models, and other MCPs in opencode.json', () => {
@@ -33,6 +41,12 @@ describe('Universal Setup Helpers (OpenCode, Antigravity & Doctor)', () => {
           command: ['engram-mcp'],
           enabled: true,
         },
+        servers: {
+          context7: {
+            type: 'remote',
+            url: 'https://mcp.context7.com/mcp',
+          },
+        },
       },
     });
 
@@ -41,15 +55,41 @@ describe('Universal Setup Helpers (OpenCode, Antigravity & Doctor)', () => {
 
     expect(parsed.theme).toBe('tokyonight');
     expect(parsed.provider.anthropic).toBeDefined();
+    // Legacy V1 flat entry from another server is preserved as-is
     expect(parsed.mcp.engram).toEqual({
       type: 'local',
       command: ['engram-mcp'],
       enabled: true,
     });
-    expect(parsed.mcp['schema-memory']).toEqual({
+    // Existing native V2 entries are preserved
+    expect(parsed.mcp.servers.context7).toEqual({
+      type: 'remote',
+      url: 'https://mcp.context7.com/mcp',
+    });
+    expect(parsed.mcp.servers['schema-memory']).toEqual({
       type: 'local',
       command: ['node', '/abs/path/cli/dist/index.js', 'mcp'],
-      enabled: true,
+    });
+  });
+
+  it('migrates a legacy flat schema-memory entry to the native V2 shape', () => {
+    const existing = JSON.stringify({
+      mcp: {
+        'schema-memory': {
+          type: 'local',
+          command: ['node', '/old/path/dist/index.js', 'mcp'],
+          enabled: true,
+        },
+      },
+    });
+
+    const result = mergeOpenCodeConfig(existing, '/new/path/dist/index.js');
+    const parsed = JSON.parse(result);
+
+    expect(parsed.mcp['schema-memory']).toBeUndefined();
+    expect(parsed.mcp.servers['schema-memory']).toEqual({
+      type: 'local',
+      command: ['node', '/new/path/dist/index.js', 'mcp'],
     });
   });
 
@@ -121,7 +161,8 @@ describe('Universal Setup Helpers (OpenCode, Antigravity & Doctor)', () => {
         'utf-8'
       );
       await writeFile(resolve(skillDir, 'SKILL.md'), '# skill', 'utf-8');
-      await writeFile(resolve(binDir, 'sm'), '#!/usr/bin/env node\n', 'utf-8');
+      const shimName = isWindows ? 'sm.cmd' : 'sm';
+      await writeFile(resolve(binDir, shimName), '@echo off\n', 'utf-8');
 
       const results = await runDoctorChecks({
         homeDir: fakeHome,
@@ -133,5 +174,26 @@ describe('Universal Setup Helpers (OpenCode, Antigravity & Doctor)', () => {
     } finally {
       await rm(fakeHome, { recursive: true, force: true });
     }
+  });
+
+  it('detects ephemeral npx / dlx installs', () => {
+    expect(
+      isEphemeralInstall(
+        'C:\\Users\\ana\\AppData\\Local\\npm-cache\\_npx\\abc123\\node_modules\\schema-memory\\dist\\index.js'
+      )
+    ).toBe(true);
+    expect(
+      isEphemeralInstall('/home/ana/.pnpm-store/v3/tmp/dlx-1234/node_modules/schema-memory/dist/index.js')
+    ).toBe(true);
+    expect(
+      isEphemeralInstall(
+        '/usr/local/lib/node_modules/schema-memory/dist/index.js'
+      )
+    ).toBe(false);
+  });
+
+  it('isWithinDir respects path boundaries', () => {
+    expect(isWithinDir('/usr/local/bin/sm', '/usr/local/bin')).toBe(true);
+    expect(isWithinDir('/usr/local/bin-other/sm', '/usr/local/bin')).toBe(false);
   });
 });

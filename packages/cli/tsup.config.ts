@@ -1,10 +1,14 @@
 import { defineConfig } from 'tsup';
-import { cp, mkdir } from 'node:fs/promises';
+import { cp, mkdir, readFile } from 'node:fs/promises';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { existsSync } from 'node:fs';
 
 const currentDir = dirname(fileURLToPath(import.meta.url));
+
+const pkg = JSON.parse(
+  await readFile(resolve(currentDir, 'package.json'), 'utf-8')
+) as { version: string };
 
 export default defineConfig({
   entry: ['src/index.ts'],
@@ -12,6 +16,9 @@ export default defineConfig({
   clean: true,
   sourcemap: true,
   shims: true,
+  define: {
+    __CLI_VERSION__: JSON.stringify(pkg.version),
+  },
   banner: {
     js: `#!/usr/bin/env node
 import { createRequire } from 'node:module';

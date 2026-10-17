@@ -3,6 +3,7 @@ import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { existsSync } from 'node:fs';
 import { chmod, rm, symlink } from 'node:fs/promises';
+import cmdShim from 'cmd-shim';
 import {
   atomicWrite,
   ensureDir,
@@ -10,12 +11,26 @@ import {
   listProjects,
   updateAgentsMdContent,
 } from '@schema-memory/core';
+import {
+  isWindows,
+  findCommandOnPath,
+  getBinDir,
+  isDirOnPath,
+  isEphemeralInstall,
+  isWithinDir,
+} from '../platform.js';
 
 export type SetupTarget = 'all' | 'opencode' | 'antigravity' | 'agents';
 
 const START_MARKER = '<!-- schema-memory:start -->';
 const END_MARKER = '<!-- schema-memory:end -->';
 
+/**
+ * Merges the schema-memory MCP server into an OpenCode configuration file
+ * using the native V2 shape (`mcp.servers.<name>`). Legacy flat entries
+ * (`mcp.<name>`, V1) are preserved for other servers; a legacy entry for
+ * schema-memory itself is migrated to the V2 shape.
+ */
 export function mergeOpenCodeConfig(
   existingRaw: string | null,
   cliDistPath: string
@@ -36,16 +51,23 @@ export function mergeOpenCodeConfig(
   }
 
   const existingMcp =
-    parsed.mcp && typeof parsed.mcp === 'object' ? parsed.mcp : {};
+    parsed.mcp && typeof parsed.mcp === 'object' ? { ...parsed.mcp } : {};
 
-  parsed.mcp = {
-    ...existingMcp,
-    'schema-memory': {
-      type: 'local',
-      command: ['node', cliDistPath, 'mcp'],
-      enabled: true,
-    },
+  const existingServers =
+    existingMcp.servers && typeof existingMcp.servers === 'object'
+      ? { ...existingMcp.servers }
+      : {};
+
+  // Migrate our own legacy V1 flat entry (if any) to the native V2 shape.
+  delete existingMcp['schema-memory'];
+
+  existingServers['schema-memory'] = {
+    type: 'local',
+    command: ['node', cliDistPath, 'mcp'],
   };
+
+  existingMcp.servers = existingServers;
+  parsed.mcp = existingMcp;
 
   return JSON.stringify(parsed, null, 2) + '\n';
 }
@@ -102,17 +124,73 @@ export function mergeGlobalAgentsMd(
   return `${existingRaw.trimEnd()}\n\n${managedBlock}\n`;
 }
 
-async function linkCliBinary(cliDistPath: string): Promise<string> {
-  await chmod(cliDistPath, 0o755);
-  const binDir = resolve(homedir(), '.local', 'bin');
+export interface LinkCliResult {
+  binDir: string;
+  linked: boolean;
+  detail: string;
+}
+
+/**
+ * Makes `sm` / `schema-memory` globally available:
+ * - Skips linking when the command already resolves on PATH outside our
+ *   managed bin dir (e.g. an npm/pnpm global install, which is the
+ *   recommended, cross-platform way).
+ * - Windows: generates .cmd / .ps1 / sh shims with cmd-shim (the same tool
+ *   npm uses), since symlinks without extensions are not executable there.
+ * - Unix: keeps the chmod + symlink approach.
+ */
+export async function linkCliBinary(cliDistPath: string): Promise<LinkCliResult> {
+  const binDir = getBinDir();
+  const onPath = findCommandOnPath('sm') ?? findCommandOnPath('schema-memory');
+
+  if (onPath && !isWithinDir(onPath, binDir)) {
+    return {
+      binDir,
+      linked: false,
+      detail: `already available on PATH (${onPath})`,
+    };
+  }
+
   await ensureDir(binDir);
 
-  for (const name of ['sm', 'schema-memory']) {
-    const linkPath = resolve(binDir, name);
-    await rm(linkPath, { force: true });
-    await symlink(cliDistPath, linkPath);
+  if (isWindows) {
+    for (const name of ['sm', 'schema-memory']) {
+      const target = resolve(binDir, name);
+      // Remove previous artifacts (including legacy extensionless symlinks).
+      await rm(target, { force: true });
+      await rm(`${target}.cmd`, { force: true });
+      await rm(`${target}.ps1`, { force: true });
+      await cmdShim(cliDistPath, target);
+    }
+  } else {
+    await chmod(cliDistPath, 0o755);
+    for (const name of ['sm', 'schema-memory']) {
+      const linkPath = resolve(binDir, name);
+      await rm(linkPath, { force: true });
+      await symlink(cliDistPath, linkPath);
+    }
   }
-  return binDir;
+
+  const detail = isDirOnPath(binDir)
+    ? `${binDir} (already on PATH)`
+    : `${binDir} (NOT on PATH)`;
+  return { binDir, linked: true, detail };
+}
+
+function printPathHint(binDir: string): void {
+  console.log(
+    `\nℹ️  "${binDir}" is not on your PATH, so the "sm" command will not resolve in new terminals.`
+  );
+  if (isWindows) {
+    console.log('   Option A (recommended): install the CLI globally with "npm i -g schema-memory".');
+    console.log(
+      '   Option B: add "%USERPROFILE%\\.local\\bin" to your user PATH via "Settings > System > About > Advanced system settings > Environment Variables".'
+    );
+  } else {
+    console.log('   Option A (recommended): install the CLI globally with "npm i -g schema-memory".');
+    console.log('   Option B: add the following to your shell profile (~/.zshrc, ~/.bashrc):');
+    console.log(`     export PATH="${binDir}:$PATH"`);
+  }
 }
 
 export async function setupCommand(options: {
@@ -130,13 +208,25 @@ export async function setupCommand(options: {
   }
 
   if (options.cliOnly) {
-    const binDir = await linkCliBinary(cliDistPath);
-    console.log(
-      `\n✅ Global CLI linked at: ${binDir}/sm and ${binDir}/schema-memory`
-    );
-    console.log(
-      'You can now run "sm", "sm init", "sm ls", "sm rm", "sm doctor" from any directory.\n'
-    );
+    try {
+      const link = await linkCliBinary(cliDistPath);
+      console.log(
+        link.linked
+          ? `\n✅ Global CLI linked at: ${link.binDir} (sm, schema-memory)`
+          : `\n✅ Global CLI already available: ${link.detail}`
+      );
+      if (link.linked && !isDirOnPath(link.binDir)) {
+        printPathHint(link.binDir);
+      }
+      console.log(
+        'You can now run "sm", "sm init", "sm ls", "sm rm", "sm doctor" from any directory.\n'
+      );
+    } catch (error: any) {
+      throw new Error(
+        `Could not link the global CLI: ${error.message}. ` +
+          'A cross-platform alternative is "npm i -g schema-memory", which installs the "sm" and "schema-memory" commands everywhere.'
+      );
+    }
     return;
   }
 
@@ -168,14 +258,14 @@ Always follow these 8 steps when touching database schemas in any registered cli
 ## Strict Isolation Guardrails
 - **Use ONLY MCP tools**: Interact with \`schema-memory\` exclusively through its MCP tools (\`schema-memory\` / \`schema-memory-mcp\`).
 - **NEVER inspect the schema-memory repository**: When working on a client project, NEVER search for, read, or analyze the \`schema-memory\` tool's own source code repository. Inspect only the client project's files.
-- **Fail-fast if MCP is missing**: If the MCP tools (\`get_schema\`, \`import_schema\`, \`get_pending_changes\`, etc.) are not available in your active session, STOP immediately without searching the filesystem and ask the user to run \`sm setup\` (or \`pnpm sm setup\`) and reload the agent session.
+- **Fail-fast if MCP is missing**: If the MCP tools (\`get_schema\`, \`import_schema\`, \`get_pending_changes\`, etc.) are not available in your active session, STOP immediately without searching the filesystem and ask the user to run \`sm setup\` and reload the agent session.
 `;
 
   const rulesContent = `# schema-memory Global Rule
 When working on a repository that contains \`.schema-memory/\` or references \`schema-memory\` in \`AGENTS.md\`:
 1. Call \`get_decisions\` and \`get_schema\` (passing \`project\`) before making or proposing any database schema change.
 2. Never write schema changes directly to code without recording decisions via \`confirm_change(userConfirmed=true)\`.
-3. **Strict Isolation**: Interact with \`schema-memory\` ONLY via its MCP tools (\`schema-memory\` / \`schema-memory-mcp\`). NEVER search for or read the \`schema-memory\` source code repository. If the MCP tools are not loaded in your current session, stop immediately and ask the user to run \`sm setup\` (or \`pnpm sm setup\`) and reload the agent.
+3. **Strict Isolation**: Interact with \`schema-memory\` ONLY via its MCP tools (\`schema-memory\` / \`schema-memory-mcp\`). NEVER search for or read the \`schema-memory\` source code repository. If the MCP tools are not loaded in your current session, stop immediately and ask the user to run \`sm setup\` and reload the agent.
 `;
 
   const pluginManifest = {
@@ -191,7 +281,7 @@ When working on a repository that contains \`.schema-memory/\` or references \`s
   };
 
   if (options.print) {
-    console.log('=== 1. OpenCode (~/.config/opencode/opencode.json) ===');
+    console.log('=== 1. OpenCode Global Config (~/.config/opencode/opencode.json) ===');
     console.log(mergeOpenCodeConfig(null, cliDistPath).trim());
     console.log('\n=== 2. Antigravity Global MCP (~/.gemini/config/mcp_config.json) ===');
     console.log(mergeAntigravityMcpConfig(null, cliDistPath).trim());
@@ -204,6 +294,15 @@ When working on a repository that contains \`.schema-memory/\` or references \`s
 
   const home = homedir();
   const installedTargets: string[] = [];
+  const warnings: string[] = [];
+
+  if (isEphemeralInstall(cliDistPath)) {
+    console.log(
+      '\n⚠️  You are running schema-memory from a temporary npx/dlx cache. ' +
+        'The MCP registration will point to an ephemeral path.\n' +
+        '   Install it globally for a stable setup: npm i -g schema-memory && sm setup\n'
+    );
+  }
 
   // 1. Standard Agent Skills (~/.agents/skills/schema-memory/SKILL.md)
   if (target === 'all' || target === 'agents' || target === 'opencode') {
@@ -281,9 +380,18 @@ When working on a repository that contains \`.schema-memory/\` or references \`s
     installedTargets.push(`Antigravity Plugin Bundle: ${agyPluginDir}`);
   }
 
-  // 4. Global CLI binary
-  const binDir = await linkCliBinary(cliDistPath);
-  installedTargets.push(`Global CLI Binary: ${binDir}/sm`);
+  // 4. Global CLI binary (skipped automatically when already on PATH)
+  try {
+    const link = await linkCliBinary(cliDistPath);
+    installedTargets.push(`Global CLI: ${link.detail}`);
+    if (link.linked && !isDirOnPath(link.binDir)) {
+      warnings.push(`Add "${link.binDir}" to PATH (or run "npm i -g schema-memory").`);
+    }
+  } catch (error: any) {
+    warnings.push(
+      `Could not link the global CLI (${error.message}). Use "npm i -g schema-memory" instead.`
+    );
+  }
 
   // 5. Refresh AGENTS.md managed block in already-registered client projects
   const projects = await listProjects();
@@ -307,7 +415,15 @@ When working on a repository that contains \`.schema-memory/\` or references \`s
   for (const item of installedTargets) {
     console.log(`   • ${item}`);
   }
+  for (const warning of warnings) {
+    console.log(`   ⚠️  ${warning}`);
+  }
+  if (warnings.length > 0 && isWindows) {
+    console.log(
+      '\nℹ️  Tip: the simplest cross-platform install is "npm i -g schema-memory".'
+    );
+  }
   console.log(
-    '\n💡 Tip: Run "sm doctor" (or "pnpm sm doctor") anytime to verify your installation.\n'
+    '\n💡 Tip: Run "sm doctor" anytime to verify your installation.\n'
   );
 }

@@ -1,5 +1,13 @@
 import { execSync } from 'node:child_process';
-import { mkdirSync, readFileSync, rmSync, existsSync } from 'node:fs';
+import {
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  existsSync,
+  copyFileSync,
+  statSync,
+  readdirSync,
+} from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -21,32 +29,42 @@ if (existsSync(distBin)) {
 mkdirSync(distBin, { recursive: true });
 
 const targets = [
-  { target: 'bun-darwin-arm64', os: 'darwin', arch: 'arm64' },
-  { target: 'bun-darwin-x64', os: 'darwin', arch: 'x64' },
-  { target: 'bun-linux-x64', os: 'linux', arch: 'x64' },
+  { target: 'bun-darwin-arm64', os: 'darwin', arch: 'arm64', ext: '' },
+  { target: 'bun-darwin-x64', os: 'darwin', arch: 'x64', ext: '' },
+  { target: 'bun-linux-x64', os: 'linux', arch: 'x64', ext: '' },
+  { target: 'bun-windows-x64', os: 'windows', arch: 'x64', ext: '.exe' },
 ];
 
 console.log(`📦 Building standalone binaries for schema-memory v${version}...`);
 
 for (const t of targets) {
-  const binaryName = `sm-${t.os}-${t.arch}`;
+  const binaryName = `sm-${t.os}-${t.arch}${t.ext}`;
   const binaryPath = resolve(distBin, binaryName);
   const archiveName = `schema-memory-v${version}-${t.os}-${t.arch}.tar.gz`;
   const archivePath = resolve(distBin, archiveName);
+  const stagingDir = resolve(distBin, `.staging-${t.os}-${t.arch}`);
 
   console.log(`🔨 Compiling ${t.target} -> ${binaryName}...`);
-  execSync(`bun build ${cliDist} --compile --target=${t.target} --outfile=${binaryPath}`, {
-    stdio: 'inherit',
-    cwd: rootDir,
-  });
+  execSync(
+    `bun build "${cliDist}" --compile --target=${t.target} --outfile="${binaryPath}"`,
+    { stdio: 'inherit', cwd: rootDir }
+  );
 
+  // Stage the binary renamed as `sm` / `sm.exe` and archive it without
+  // GNU-specific tar flags so the script also works on Windows (bsdtar).
+  mkdirSync(stagingDir, { recursive: true });
+  const stagedName = `sm${t.ext}`;
+  copyFileSync(binaryPath, resolve(stagingDir, stagedName));
   console.log(`📦 Archiving ${archiveName}...`);
-  // Tar the binary renamed as 'sm' inside the tarball for easy extraction
-  execSync(`tar -czf ${archivePath} -C ${distBin} --transform "s/${binaryName}/sm/" ${binaryName} 2>/dev/null || tar -czf ${archivePath} -C ${distBin} ${binaryName}`, {
+  execSync(`tar -czf "${archivePath}" -C "${stagingDir}" ${stagedName}`, {
     stdio: 'inherit',
     cwd: rootDir,
   });
+  rmSync(stagingDir, { recursive: true, force: true });
 }
 
 console.log(`\n✅ Standalone binaries generated in ${distBin}:`);
-execSync(`ls -lh ${distBin}`, { stdio: 'inherit' });
+for (const file of readdirSync(distBin).sort()) {
+  const sizeMb = (statSync(resolve(distBin, file)).size / (1024 * 1024)).toFixed(2);
+  console.log(`   ${file} (${sizeMb} MB)`);
+}

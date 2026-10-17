@@ -1,4 +1,8 @@
 import process from 'node:process';
+import { existsSync, readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { resolve } from 'node:path';
+import { createInterface } from 'node:readline';
 import { Command } from 'commander';
 import { startStdioServer } from '@schema-memory/mcp';
 import { uiCommand } from './commands/ui.js';
@@ -8,13 +12,69 @@ import { statusCommand } from './commands/status.js';
 import { setupCommand } from './commands/setup.js';
 import { doctorCommand } from './commands/doctor.js';
 
+declare const __CLI_VERSION__: string;
+
+function getCliVersion(): string {
+  // Prefer the version from the published package.json; standalone binaries
+  // fall back to the constant injected at build time.
+  try {
+    const pkgUrl = new URL('../package.json', import.meta.url);
+    const pkg = JSON.parse(readFileSync(pkgUrl, 'utf-8')) as { version?: string };
+    if (pkg.version) return pkg.version;
+  } catch {
+    // ignore and use the build-time constant below
+  }
+  return typeof __CLI_VERSION__ === 'undefined' ? '0.0.0' : __CLI_VERSION__;
+}
+
+function hasGlobalSetup(home = homedir()): boolean {
+  const candidates = [
+    resolve(home, '.config', 'opencode', 'opencode.json'),
+    resolve(home, '.gemini', 'config', 'mcp_config.json'),
+  ];
+  for (const file of candidates) {
+    try {
+      if (existsSync(file) && readFileSync(file, 'utf-8').includes('schema-memory')) {
+        return true;
+      }
+    } catch {
+      // ignore unreadable config files
+    }
+  }
+  return false;
+}
+
+async function offerFirstRunSetup(): Promise<void> {
+  if (!process.stdin.isTTY || !process.stdout.isTTY) return;
+  if (process.env.SCHEMA_MEMORY_SKIP_SETUP_PROMPT === '1') return;
+  if (hasGlobalSetup()) return;
+
+  console.log(
+    '\n👋 schema-memory is not configured globally yet (agent MCP, skills and rules).'
+  );
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  const answer = await new Promise<string>((resolveAnswer) => {
+    rl.question('   Run "sm setup" now? (Y/n) ', (value) => {
+      rl.close();
+      resolveAnswer(value);
+    });
+  });
+
+  const normalized = answer.trim().toLowerCase();
+  if (normalized === '' || normalized === 'y' || normalized === 'yes') {
+    await setupCommand({ target: 'all' });
+  } else {
+    console.log('   Skipped. Run "sm setup" anytime to configure your agents.\n');
+  }
+}
+
 const program = new Command();
 
 program
   .name('schema-memory')
   .alias('sm')
   .description('Live database schema memory & ADR workflow for AI pair programming')
-  .version('0.1.0');
+  .version(getCliVersion());
 
 program
   .command('ui', { isDefault: true })
@@ -24,6 +84,7 @@ program
   .option('--no-open', 'Do not open web browser automatically')
   .action(async (opts) => {
     try {
+      await offerFirstRunSetup();
       await uiCommand(opts);
     } catch (err: any) {
       console.error('Error starting UI:', err.message);

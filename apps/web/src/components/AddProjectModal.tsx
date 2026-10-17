@@ -21,6 +21,7 @@ export function AddProjectModal({ onClose, onAdded }: { onClose: () => void; onA
   const [parentPath, setParentPath] = useState<string | null>(null);
   const [directories, setDirectories] = useState<DirectoryEntry[]>([]);
   const [selectedPath, setSelectedPath] = useState('');
+  const [manualPath, setManualPath] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -45,6 +46,7 @@ export function AddProjectModal({ onClose, onAdded }: { onClose: () => void; onA
       setParentPath(res.parent);
       setDirectories(res.directories);
       setSelectedPath(res.current);
+      setManualPath(res.current);
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -55,6 +57,19 @@ export function AddProjectModal({ onClose, onAdded }: { onClose: () => void; onA
   useEffect(() => {
     loadDirectory();
   }, []);
+
+  const handleGoToManualPath = async () => {
+    const target = manualPath.trim();
+    if (!target) return;
+    await loadDirectory(target);
+  };
+
+  const handleUseManualPath = () => {
+    const target = manualPath.trim();
+    if (!target) return;
+    setSelectedPath(target);
+    setError(null);
+  };
 
   const handleNextToPlan = async () => {
     if (!selectedPath) return;
@@ -194,6 +209,40 @@ export function AddProjectModal({ onClose, onAdded }: { onClose: () => void; onA
                 <FolderOpen size={14} color="var(--accent)" />
                 <span>{currentPath}</span>
               </div>
+
+              {/* Manual path input */}
+              <div style={{ display: 'flex', gap: 8 }}>
+                <input
+                  value={manualPath}
+                  onChange={(e) => setManualPath(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') handleGoToManualPath();
+                  }}
+                  placeholder="Pega una ruta y pulsa Ir (ej: E:\dev\mi-proyecto o /Users/tu-usuario/proyecto)"
+                  style={{ flex: 1, fontSize: 12, fontFamily: 'var(--font-mono)' }}
+                />
+                <button
+                  className="btn btn-secondary"
+                  onClick={handleGoToManualPath}
+                  disabled={loading || !manualPath.trim()}
+                >
+                  Ir
+                </button>
+                <button
+                  className="btn btn-secondary"
+                  onClick={handleUseManualPath}
+                  disabled={!manualPath.trim()}
+                  title="Selecciona esta ruta aunque no se pueda explorar"
+                >
+                  Usar ruta
+                </button>
+              </div>
+
+              {selectedPath && selectedPath !== currentPath && (
+                <p style={{ fontSize: 12, color: 'var(--accent)', fontFamily: 'var(--font-mono)' }}>
+                  Ruta seleccionada: {selectedPath}
+                </p>
+              )}
 
               {/* Directory list */}
               <div

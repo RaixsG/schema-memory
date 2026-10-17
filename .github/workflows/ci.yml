@@ -27,3 +27,24 @@ jobs:
       - run: pnpm test
 
       - run: pnpm bundle:cli
+
+  test-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      - name: Install pnpm
+        run: npm install -g pnpm@9.15.9
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm build
+
+      - run: pnpm test
+
+      - run: pnpm bundle:cli
