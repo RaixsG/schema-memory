@@ -53,6 +53,10 @@ pnpm link-cli
 ```
 Esto crea los symlinks correspondientes en `~/.local/bin/` (o shims `.cmd`/`.ps1` en Windows).
 
+> [!NOTE]
+> **Subcomandos de pnpm**: Para ejecutar comandos del CLI desde el monorepo con `pnpm`, antepón siempre `sm` (ej. `pnpm sm setup` o `pnpm sm doctor`), ya que `pnpm setup` sin `sm` es un comando reservado interno del gestor de paquetes pnpm para configurar el PATH.
+
+
 ---
 
 ## 4. Ejecución de Pruebas

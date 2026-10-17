@@ -20,12 +20,15 @@ Al desarrollar sistemas a gran velocidad con asistentes de Inteligencia Artifici
 - 🎨 **Lienzo Visual Interactivo**: Diseña y edita tablas en un canvas local basado en **DBML canónico y neutral** (desacoplado de ORMs o SQL específicos).
 - 🤖 **Debate Guiado con IA**: El agente no aplica cambios de base de datos a ciegas; antes de tocar código, inicia un debate arquitectónico obligatorio contigo en el chat.
 - 📜 **ADRs Inmutables en Git**: Cada confirmación genera un Architecture Decision Record versionado en `.schema-memory/adr/` con las razones y alternativas técnicas.
-- 🧠 **Memoria Persistente (Engram / Notion)**: Genera automáticamente resúmenes estructurados para tus herramientas de memoria a largo plazo.
-- ⚡ **Zero Docker**: Corre como una aplicación nativa ultraligera sobre Node.js o Bun, sin contenedores ni daemons pesados.
+- 🧠 **Memoria Persistente para el Agente**: Genera automáticamente un payload `engramSummary` en cada confirmación para que el asistente de IA guarde la decisión en su sistema de memoria a largo plazo (Engram, Notion, etc.).
+- ⚡ **Zero Docker & Alto Rendimiento**: Corre como una aplicación nativa sobre Node.js o Bun con compresión Gzip transparente, caché ETag (`304 Not Modified`), caché LRU de esquemas y herramientas MCP optimizadas para ahorrar tokens.
 
 ---
 
 ## 2. Inicio Rápido (Quick Start)
+
+> [!NOTE]
+> **No instales con `npm i schema-memory` en proyectos**: La barra lateral de `npmjs.com` sugiere ese comando por defecto, pero instala el paquete solo en `node_modules` local. Usa siempre **`npx schema-memory`** (ejecución directa) o instálalo globalmente con **`npm i -g schema-memory`** para disponer del comando `sm`.
 
 ### Opción A: Ejecución Directa con `npx` o `bunx` (Recomendada / Zero-Install)
 
@@ -42,8 +45,8 @@ bunx schema-memory
 pnpm dlx schema-memory
 ```
 
-> [!TIP]
-> En la primera ejecución, si tus agentes de IA aún no están configurados, `schema-memory` te ofrecerá ejecutar `setup` automáticamente de forma interactiva.
+- Inicia la aplicación web local y el servidor en `http://127.0.0.1:4317` (SPA precompilada 100% offline, sin dependencias externas).
+- En la primera ejecución, si tus agentes de IA aún no están configurados, te ofrecerá ejecutar `setup` automáticamente de forma interactiva.
 
 ### Opción B: Instalar el CLI global `sm`
 
@@ -74,7 +77,7 @@ flowchart LR
 ```
 
 1. **Diseña en el Canvas**: Abre la UI local (`sm`), crea tablas, añade columnas o relaciones.
-2. **Copia el Prompt al Agente**: Haz clic en el botón de la UI para transferir los cambios pendientes a tu asistente de IA (OpenCode, Antigravity, Claude Code).
+2. **Copia el Prompt al Agente**: Haz clic en el botón de la UI para transferir los cambios pendientes a tu asistente de IA (OpenCode, Antigravity, Claude Code, Cursor).
 3. **Debate Guiado de Decisiones**: La IA analiza el diff con `get_pending_changes()` y debate contigo: *¿Por qué separamos esta tabla? ¿Qué trade-offs evaluamos? ¿Qué alternativas descartamos?*.
 4. **Confirmación Atómica**: Al aprobar la decisión en el chat, la IA ejecuta `confirm_change(userConfirmed=true)`, actualizando el esquema canónico y generando el ADR inmutable en tu repositorio.
 
@@ -84,11 +87,11 @@ flowchart LR
 
 | Comando | Alias | Descripción |
 | :--- | :--- | :--- |
-| `sm` | `sm ui` | Inicia la API local y abre el canvas visual en `http://127.0.0.1:4317` (puerto configurable con `-p`). |
-| `sm init` | `sm add` | Vincula el proyecto actual o la ruta especificada (`sm add /ruta/proyecto`). |
-| `sm ls` | `sm status` | Muestra el estado de proyectos registrados, cambios pendientes y ADRs. |
-| `sm rm [id]` | — | Desvincula un proyecto de `schema-memory`. |
-| `sm setup` | — | Configura de forma no destructiva los servidores MCP y skills para **OpenCode**, **Antigravity** y agentes estándar (`--target all\|opencode\|antigravity`). |
+| `sm` | `sm ui` | Inicia la API local y abre el canvas visual en `http://127.0.0.1:4317` (puerto configurable con `-p / --port`). |
+| `sm add [ruta]` | `sm init` | Vincula un proyecto a schema-memory (por defecto directorio actual `.`). |
+| `sm status` | `sm ls` | Muestra el estado de proyectos registrados, cambios pendientes y ADRs. |
+| `sm remove [id]` | `sm rm` | Desvincula un proyecto de `schema-memory`. |
+| `sm setup` | — | Configura de forma no destructiva los servidores MCP y skills (`--target all\|opencode\|antigravity`). |
 | `sm doctor` | — | Diagnóstico de salud de registro MCP, binarios en el PATH y estado de proyectos. |
 | `sm mcp` | — | Inicia el servidor MCP sobre `stdio` para comunicación directa con agentes. |
 
@@ -98,9 +101,24 @@ flowchart LR
 
 `schema-memory` es agnóstico de agente e implementa el protocolo abierto **Model Context Protocol (MCP)**:
 
-- **OpenCode**: Configuración nativa V2 en `~/.config/opencode/opencode.json` con comando stdio, skills y reglas en `AGENTS.md`.
-- **Google Antigravity**: Registro en `~/.gemini/config/mcp_config.json`, regla global en `GEMINI.md` y plugin oficial.
-- **Claude Code & Agentes Estándar**: Soporte para la especificación abierta `~/.agents/skills/schema-memory/SKILL.md`.
+- **OpenCode**: Configuración automática con `sm setup` en `~/.config/opencode/opencode.json` (formato V2), skills y reglas en `AGENTS.md`.
+- **Google Antigravity**: Registro automático con `sm setup` en `~/.gemini/config/mcp_config.json`, regla global en `GEMINI.md` y plugin oficial.
+- **Claude Code**: Conexión directa mediante CLI:
+  ```bash
+  claude mcp add schema-memory -- npx -y schema-memory mcp
+  ```
+- **Cursor**: Añadir a `~/.cursor/mcp.json` (o Settings → MCP):
+  ```json
+  {
+    "mcpServers": {
+      "schema-memory": {
+        "command": "npx",
+        "args": ["-y", "schema-memory", "mcp"]
+      }
+    }
+  }
+  ```
+- **Estándar Abierto Agent Skills**: Soporte nativo para la especificación universal en `~/.agents/skills/schema-memory/SKILL.md`.
 
 ---
 

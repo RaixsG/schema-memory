@@ -23,18 +23,18 @@ El servidor MCP está implementado en `@schema-memory/mcp` utilizando el SDK ofi
 
 | Herramienta | Parámetros principales | Descripción |
 | :--- | :--- | :--- |
-| `list_projects` | — | Lista todos los proyectos registrados localmente. |
-| `get_schema` | `project?: string` | Devuelve el contenido íntegro del `schema.dbml` canónico. |
-| `get_pending_changes` | `project?: string` | Retorna el diff estructural pendiente generado desde la Web UI o por la IA. |
-| `propose_change` | `project?: string, schema: string, reason?: string` | Permite al agente proponer un cambio estructural desde el chat sin tocar archivos. |
+| `list_projects` | — | Lista todos los proyectos registrados localmente con conteo rápido de cambios pendientes y ADRs. |
+| `get_schema` | `project?: string, format?: "dbml" \| "summary" \| "both", tables?: string[]` | Devuelve el DBML canónico. El parámetro `tables` permite aislar un subgrafo específico y sus relaciones conexas (`includeConnected: true`) para reducir el consumo de tokens de contexto. |
+| `get_pending_changes` | `project?: string` | Retorna el diff estructural pendiente generado desde la Web UI o propuesto por la IA. |
+| `propose_change` | `project?: string, schema: string, reason?: string` | Permite al agente proponer un cambio estructural desde el chat sin escribir directamente en archivos del cliente. |
 | `draft_adr` | `project?: string, title: string, context: string, decision: string, consequences: string, alternatives?: string[]` | Redacta o actualiza el borrador de ADR en `.schema-memory/pending/adr-draft.json`. |
-| `confirm_change` | `project?: string, userConfirmed: boolean` | **Transacción atómica**: Aplica el cambio a `schema.dbml`, crea el archivo `adr/000X-[slug].md` y devuelve `engramSummary`. Falla si `userConfirmed != true`. |
+| `confirm_change` | `project?: string, userConfirmed: boolean` | **Transacción atómica**: Aplica el cambio a `schema.dbml`, crea el archivo `adr/000X-[slug].md` y devuelve `engramSummary`. Falla si `userConfirmed != true` o si el cambio está desactualizado (`STALE_CHANGE`). |
 | `discard_change` | `project?: string` | Cancela el cambio pendiente y limpia la carpeta `.schema-memory/pending/`. |
-| `get_decisions` | `project?: string, table?: string, limit?: number` | Consulta el histórico de ADRs del proyecto, opcionalmente filtrado por tabla. |
-| `get_adr` | `project?: string, id: string` | Lee el texto completo de un ADR específico por su identificador. |
-| `confirm_adr` | `project?: string, id: string` | Marca un ADR existente como confirmado. |
-| `import_schema` | `project?: string, dbml: string, dialect?: string` | Inicializa o sobrescribe el esquema DBML inicial. |
-| `check_drift` | `project?: string` | Compara el DBML canónico con los esquemas ORM locales del proyecto (Prisma, Django, etc.). |
+| `get_decisions` | `project?: string, table?: string, column?: string, status?: "propuesto" \| "confirmado" \| "reconstruido", limit?: number` | Consulta el histórico de ADRs del proyecto con filtros granulares por entidad o estado. |
+| `get_adr` | `project?: string, id: string, includeRawMarkdown?: boolean` | Lee los campos estructurados de un ADR específico. `includeRawMarkdown` es `false` por defecto para ahorrar tokens. |
+| `confirm_adr` | `project?: string, id: string` | Promueve un ADR existente de estado `reconstruido` a `confirmado` tras revisión humana. |
+| `import_schema` | `project?: string, dbml: string, dialect?: string, adrs?: Array<{ title, context, decision, consequences, alternatives }>` | Inicializa o sobrescribe el esquema DBML inicial y genera ADRs iniciales concurrentemente. |
+| `check_drift` | `project?: string, candidateDbml: string` | Compara un DBML candidato extraído de código/migraciones contra el `schema.dbml` canónico para certificar paridad. |
 
 ---
 
@@ -48,7 +48,7 @@ sequenceDiagram
     actor Dev as Desarrollador
     participant UI as Web Canvas
     participant MCP as Servidor MCP
-    participant Agent as Agente IA (Antigravity/OpenCode)
+    participant Agent as Agente IA (Antigravity/OpenCode/Claude)
     participant FS as Repositorio (.schema-memory/)
 
     Dev->>UI: Modifica tablas o columnas en el canvas
@@ -63,6 +63,7 @@ sequenceDiagram
     Agent->>Dev: Presenta borrador final del ADR y pide aprobación explícita
     Dev->>Agent: "Aprobado, confirma el cambio"
     Agent->>MCP: confirm_change(userConfirmed=true)
+    Note over MCP,FS: Valida baseHash (evita colisiones STALE_CHANGE)
     MCP->>FS: Transacción atómica: actualiza schema.dbml + crea adr/000X.md
     MCP-->>Agent: Retorna confirmación + engramSummary
     Agent->>Dev: Muestra resumen y sincroniza modelos de código / migraciones
@@ -97,7 +98,26 @@ El comando `sm setup` (o `npx schema-memory setup`) configura automáticamente l
 - Añade la regla global en `~/.gemini/config/GEMINI.md`.
 - Instala el paquete de plugin en `~/.gemini/config/plugins/schema-memory/`.
 
-### 4.3 Estándar Abierto Agent Skills (`~/.agents/`)
+### 4.3 Claude Code
+Registra el servidor directamente desde tu terminal:
+```bash
+claude mcp add schema-memory -- npx -y schema-memory mcp
+```
+
+### 4.4 Cursor
+Añade la siguiente entrada en `~/.cursor/mcp.json` (o en Cursor Settings → MCP):
+```json
+{
+  "mcpServers": {
+    "schema-memory": {
+      "command": "npx",
+      "args": ["-y", "schema-memory", "mcp"]
+    }
+  }
+}
+```
+
+### 4.5 Estándar Abierto Agent Skills (`~/.agents/`)
 - Publica el skill universal en `~/.agents/skills/schema-memory/SKILL.md`, compatible con herramientas que implementan la especificación abierta de habilidades para agentes.
 
 ---
@@ -110,3 +130,16 @@ En los proyectos cliente registrados se inyecta la siguiente directiva en `AGENT
 
 ### ¿Por qué existe esta regla?
 Cuando un desarrollador trabaja en un proyecto de cliente que utiliza `schema-memory`, el agente debe interactuar con el esquema a través del protocolo oficial y no intentar inferir o ejecutar scripts del código fuente interno del motor, garantizando la inmutabilidad de los ADRs y la integridad del archivo DBML canónico.
+
+---
+
+## 6. Optimización de Tokens de Contexto para Modelos LLM
+
+Para esquemas grandes de bases de datos (docenas o cientos de tablas), `schema-memory` incorpora mecanismos para no saturar la ventana de contexto del agente:
+
+1. **Filtrado por Tablas en `get_schema`**:
+   Permite pasar un array de tablas `tables: ["orders", "payments"]`. El servidor no solo filtra esas tablas sino que incluye automáticamente sus relaciones y tipos enum asociados (`includeConnected: true`), aislando el subgrafo exacto de trabajo.
+2. **ADRs Estructurados sin Volcado Markdown**:
+   La herramienta `get_adr` devuelve por defecto los campos estructurados (`title`, `context`, `decision`, `consequences`, `alternatives`, `diffText`), omitiendo `rawMarkdown` salvo que se especifique `includeRawMarkdown: true`.
+3. **Serialización JSON Minificada**:
+   Los recursos y respuestas MCP serializan payloads JSON de manera compacta para minimizar el consumo de tokens en prompts.
