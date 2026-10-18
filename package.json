@@ -1,6 +1,6 @@
 {
   "name": "schema-memory-monorepo",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "private": true,
   "packageManager": "pnpm@9.15.9",
   "scripts": {
@@ -19,8 +19,7 @@
     "link-cli": "node scripts/ensure-build.mjs && node packages/cli/dist/index.js setup --cli-only",
     "sm": "node scripts/ensure-build.mjs && node packages/cli/dist/index.js",
     "pack:cli": "pnpm --dir packages/cli pack",
-    "build:binaries": "node scripts/build-binaries.mjs",
-    "release": "node scripts/release.mjs"
+    "version:sync": "node scripts/sync-version.mjs"
   },
   "license": "MIT",
   "repository": {

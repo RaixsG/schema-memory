@@ -126,28 +126,32 @@ Durante el build de `packages/cli`:
 
 ## 7. Versionado y Publicación de Releases
 
-El repositorio incluye un script automatizado (`scripts/release.mjs`) para sincronizar la versión de todos los paquetes del monorepo (`package.json`, `packages/*`, `apps/*`), generar el commit `chore(release): vX.Y.Z`, crear el tag anotado y pushear todo a la rama `main`:
+El repositorio utiliza un flujo de releases **automatizado impulsado por tags de Git** (`.github/workflows/release.yml`). Para publicar una nueva versión, basta con crear y pushear el tag correspondiente:
 
 ```bash
-# Simular cambios sin modificar archivos ni hacer git push (dry-run)
-pnpm release patch --dry-run
+# 1. Crear el tag con la versión deseada
+git tag v0.1.4
 
-# Incrementar versión de parche (ej. 0.1.2 -> 0.1.3), commitear, taggear y pushear a main
-pnpm release patch
-
-# Incrementar versión menor o mayor
-pnpm release minor
-pnpm release major
-
-# Especificar una versión exacta
-pnpm release 0.2.0
-
-# Crear commit y tag localmente sin hacer git push
-pnpm release patch --no-push
+# 2. Pushear el tag a origin
+git push origin v0.1.4
 ```
 
-> [!NOTE]
-> Al pushear el tag `v*` a `origin`, el workflow de CI/CD (`.github/workflows/release.yml`) se dispara automáticamente para compilar los paquetes, generar los binarios standalone (`dist-bin/`) y publicar el paquete CLI en npm y en GitHub Releases.
+O alternativamente, crear la release directamente desde la interfaz web de GitHub (**Releases** -> **Draft a new release** -> **Choose a tag: v0.1.4** -> **Publish release**).
+
+### ¿Qué hace el workflow automáticamente?
+1. Extrae la versión del tag (`v0.1.4` -> `0.1.4`).
+2. Sincroniza todos los `package.json` del monorepo (`package.json`, `packages/*`, `apps/*`) y `pnpm-lock.yaml` mediante `scripts/sync-version.mjs`.
+3. Ejecuta `pnpm build` y corre la suite completa de tests (`pnpm test`).
+4. Empaqueta el CLI autocontenido (`packages/cli/schema-memory-0.1.4.tgz`).
+5. Publica en **npm** (`schema-memory@0.1.4`) con protección idempotente (evita errores 403 si la versión ya existe).
+6. Crea la **GitHub Release** con changelog autogenerado y el `.tgz` adjunto.
+7. Comitea la sincronización de versión de vuelta a la rama `main` con `[skip ci]`.
+
+> [!TIP]
+> Si deseas sincronizar la versión localmente sin crear tag ni pushear, puedes usar:
+> ```bash
+> pnpm version:sync 0.1.4
+> ```
 
 ---
 
