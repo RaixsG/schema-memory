@@ -364,9 +364,10 @@ export async function applyAddProject(
   const existingProjects = await listProjects();
   let id = slugify(candidateId);
   let counter = 2;
+  const absPathKey = normalizePathKey(absPath);
   while (
     existingProjects.some(
-      (p) => p.id === id && p.path !== absPath
+      (p) => p.id === id && normalizePathKey(p.path) !== absPathKey
     )
   ) {
     id = `${slugify(options.id || plan.defaultId)}-${counter++}`;

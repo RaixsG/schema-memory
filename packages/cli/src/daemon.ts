@@ -60,8 +60,9 @@ export function isProcessAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
     return true;
-  } catch {
-    return false;
+  } catch (err: any) {
+    // EPERM means the process exists on the system but current process lacks permission to signal it
+    return err?.code === 'EPERM';
   }
 }
 
@@ -115,7 +116,9 @@ export async function findActiveDaemon(
 export function openBrowser(targetUrl: string): void {
   try {
     if (process.platform === 'win32') {
-      spawn('cmd.exe', ['/c', 'start', '""', targetUrl], {
+      // In Windows cmd.exe, '&' separates commands. Quoting the URL avoids command splitting.
+      const sanitizedUrl = targetUrl.replace(/"/g, '');
+      spawn('cmd.exe', ['/c', 'start', '""', `"${sanitizedUrl}"`], {
         detached: true,
         stdio: 'ignore',
         windowsHide: true,
@@ -196,7 +199,8 @@ export async function spawnDetached(options: {
   let healthyPort = requestedPort;
 
   while (Date.now() - start < maxWaitMs) {
-    for (const p of [requestedPort, requestedPort + 1, requestedPort + 2]) {
+    for (let offset = 0; offset <= 10; offset++) {
+      const p = requestedPort + offset;
       if (await checkServerHealth(`http://127.0.0.1:${p}`, 250)) {
         healthy = true;
         healthyPort = p;

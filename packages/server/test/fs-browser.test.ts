@@ -52,4 +52,28 @@ describe('fs-browser path policy', () => {
       expect(typeof hasVolumes).toBe('boolean');
     }
   });
+
+  it('allows extra custom roots such as registered projects', () => {
+    const home = '/home/ana';
+    const tmp = '/home/ana/tmp';
+    const registeredProject = '/opt/my-company/backend';
+
+    expect(
+      isPathAllowed(registeredProject, {
+        platform: 'linux',
+        home,
+        tmp,
+        extraAllowedRoots: [registeredProject],
+      })
+    ).toBe(true);
+
+    expect(
+      isPathAllowed(`${registeredProject}/src`, {
+        platform: 'linux',
+        home,
+        tmp,
+        extraAllowedRoots: [registeredProject],
+      })
+    ).toBe(true);
+  });
 });

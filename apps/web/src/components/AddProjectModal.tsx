@@ -541,8 +541,14 @@ export function AddProjectModal({ onClose, onAdded }: { onClose: () => void; onA
                     >
                       Registrar como nuevo (ID distinto)
                     </button>
-                    <button className="btn btn-secondary" onClick={() => setConflict(null)}>
-                      Cancelar
+                    <button
+                      className="btn btn-secondary"
+                      onClick={() => {
+                        setConflict(null);
+                        setStep(1);
+                      }}
+                    >
+                      Elegir otra carpeta
                     </button>
                   </div>
                   <span style={{ color: 'var(--text-muted)' }}>

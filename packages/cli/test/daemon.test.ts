@@ -9,6 +9,7 @@ import {
   isProcessAlive,
   findActiveDaemon,
   stopDaemon,
+  openBrowser,
   type DaemonState,
 } from '../src/daemon.js';
 import { startServer, startServerWithFallback } from '@schema-memory/server';
@@ -102,5 +103,34 @@ describe('Daemon Management (ui.json, process liveness, stop & fallback)', () =>
     } finally {
       await first.close();
     }
+  });
+
+  it('treats EPERM as alive in isProcessAlive', () => {
+    const originalKill = process.kill;
+    try {
+      const epermError = new Error('EPERM') as any;
+      epermError.code = 'EPERM';
+      process.kill = (() => {
+        throw epermError;
+      }) as any;
+
+      expect(isProcessAlive(4321)).toBe(true);
+
+      const esrchError = new Error('ESRCH') as any;
+      esrchError.code = 'ESRCH';
+      process.kill = (() => {
+        throw esrchError;
+      }) as any;
+
+      expect(isProcessAlive(4321)).toBe(false);
+    } finally {
+      process.kill = originalKill;
+    }
+  });
+
+  it('openBrowser handles URLs with query params safely without throwing', () => {
+    expect(() => {
+      openBrowser('http://127.0.0.1:4317/projects/my-id?tab=decisions&highlight=1');
+    }).not.toThrow();
   });
 });

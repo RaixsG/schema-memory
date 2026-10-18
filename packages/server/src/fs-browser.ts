@@ -42,7 +42,27 @@ function normalizeForCompare(targetPath: string, platform: NodeJS.Platform): str
  * - Linux/other: the user home, /tmp, /mnt and /media.
  * Recalculated dynamically on every request without caching.
  */
-export function computeAllowedRoots(options: PathPolicyOptions = {}): string[] {
+export function listWindowsDrives(): string[] {
+  const drives: string[] = [];
+  for (let code = 65; code <= 90; code += 1) {
+    const drive = `${String.fromCharCode(code)}:\\`;
+    if (existsSync(drive)) drives.push(drive);
+  }
+  return drives;
+}
+
+export interface AllowedRootsOptions extends PathPolicyOptions {
+  extraAllowedRoots?: string[];
+}
+
+/**
+ * Directory roots the local folder browser is allowed to access, per OS:
+ * - Windows: the user home, temp dir and every existing drive root (C:\, D:\, ...).
+ * - macOS: the user home, /Volumes, /tmp and /private/tmp.
+ * - Linux/other: the user home, /tmp, /mnt and /media.
+ * Recalculated dynamically on every request without caching.
+ */
+export function computeAllowedRoots(options: AllowedRootsOptions = {}): string[] {
   const platform = options.platform ?? process.platform;
   const home = options.home ?? homedir();
   const tmp = options.tmp ?? tmpdir();
@@ -53,10 +73,15 @@ export function computeAllowedRoots(options: PathPolicyOptions = {}): string[] {
   add(home);
   add(tmp);
 
+  if (options.extraAllowedRoots) {
+    for (const extra of options.extraAllowedRoots) {
+      if (extra) add(extra);
+    }
+  }
+
   if (platform === 'win32') {
-    for (let code = 65; code <= 90; code += 1) {
-      const drive = `${String.fromCharCode(code)}:\\`;
-      if (existsSync(drive)) add(drive);
+    for (const drive of listWindowsDrives()) {
+      add(drive);
     }
   } else if (platform === 'darwin') {
     add('/Volumes');
@@ -100,20 +125,11 @@ async function pathExists(p: string): Promise<boolean> {
 
 export function isPathAllowed(
   targetPath: string,
-  options: PathPolicyOptions = {}
+  options: AllowedRootsOptions = {}
 ): boolean {
   const platform = options.platform ?? process.platform;
   const roots = computeAllowedRoots(options);
   return roots.some((root) => isPathWithin(targetPath, root, platform));
-}
-
-function listWindowsDrives(): string[] {
-  const drives: string[] = [];
-  for (let code = 65; code <= 90; code += 1) {
-    const drive = `${String.fromCharCode(code)}:\\`;
-    if (existsSync(drive)) drives.push(drive);
-  }
-  return drives;
 }
 
 /**
@@ -239,8 +255,10 @@ export async function listDirectories(
   targetPath?: string
 ): Promise<{ current: string; parent: string | null; directories: DirectoryEntry[] }> {
   const current = normalize(resolve(targetPath || homedir()));
+  const projects = await listProjects().catch(() => []);
+  const extraAllowedRoots = projects.map((p) => p.path);
 
-  if (!isPathAllowed(current)) {
+  if (!isPathAllowed(current, { extraAllowedRoots })) {
     throw new Error('Path is outside allowed directories.');
   }
 
@@ -249,10 +267,7 @@ export async function listDirectories(
     throw new Error(`Path "${current}" is not a directory.`);
   }
 
-  const [entries, projects] = await Promise.all([
-    readdir(current, { withFileTypes: true }),
-    listProjects().catch(() => []),
-  ]);
+  const entries = await readdir(current, { withFileTypes: true });
 
   const registeredPaths = new Set(
     projects.map((p) => normalizePathKey(p.path))
@@ -316,7 +331,8 @@ export async function listDirectories(
   directories.sort((a, b) => a.name.localeCompare(b.name));
 
   const parent = resolve(current, '..');
-  const parentAllowed = parent !== current && isPathAllowed(parent);
+  const parentAllowed =
+    parent !== current && isPathAllowed(parent, { extraAllowedRoots });
 
   return {
     current,
