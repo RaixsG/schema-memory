@@ -1,6 +1,6 @@
 {
   "name": "schema-memory",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Live database schema memory, ADR workflow & AI pair programming companion",
   "license": "MIT",
   "repository": {
