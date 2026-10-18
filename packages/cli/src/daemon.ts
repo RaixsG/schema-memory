@@ -8,6 +8,7 @@ import {
   ensureDir,
 } from '@schema-memory/core';
 import { rm } from 'node:fs/promises';
+import { getPlatform } from './platform/index.js';
 
 export interface DaemonState {
   pid: number;
@@ -114,23 +115,7 @@ export async function findActiveDaemon(
 }
 
 export function openBrowser(targetUrl: string): void {
-  try {
-    if (process.platform === 'win32') {
-      // In Windows cmd.exe, '&' separates commands. Quoting the URL avoids command splitting.
-      const sanitizedUrl = targetUrl.replace(/"/g, '');
-      spawn('cmd.exe', ['/c', 'start', '""', `"${sanitizedUrl}"`], {
-        detached: true,
-        stdio: 'ignore',
-        windowsHide: true,
-      }).unref();
-    } else if (process.platform === 'darwin') {
-      spawn('open', [targetUrl], { detached: true, stdio: 'ignore' }).unref();
-    } else {
-      spawn('xdg-open', [targetUrl], { detached: true, stdio: 'ignore' }).unref();
-    }
-  } catch {
-    // Ignore browser spawn errors
-  }
+  getPlatform().openBrowser(targetUrl).catch(() => {});
 }
 
 export async function spawnDetached(options: {
@@ -251,18 +236,7 @@ export async function stopDaemon(
 
   const targetPid = active?.pid || state?.pid;
   if (targetPid && targetPid > 0) {
-    if (process.platform === 'win32') {
-      try {
-        spawnSync('taskkill', ['/pid', String(targetPid), '/T', '/F'], {
-          stdio: 'ignore',
-          windowsHide: true,
-        });
-      } catch {}
-    } else {
-      try {
-        process.kill(targetPid, 'SIGTERM');
-      } catch {}
-    }
+    await getPlatform().stopProcess(targetPid);
   }
 
   await clearDaemonState(registryDir);

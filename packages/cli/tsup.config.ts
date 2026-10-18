@@ -24,11 +24,7 @@ export default defineConfig({
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);`,
   },
-  noExternal: [
-    '@schema-memory/core',
-    '@schema-memory/mcp',
-    '@schema-memory/server',
-  ],
+  noExternal: [/(.*)/],
   async onSuccess() {
     const webDist = resolve(currentDir, '../../apps/web/dist');
     const targetWeb = resolve(currentDir, 'dist/web');

@@ -8,6 +8,7 @@ import {
   isCorruptedShimContent,
 } from '../src/windows-shim.js';
 import { runDoctorChecks } from '../src/commands/doctor.js';
+import { getPlatform } from '../src/platform/index.js';
 
 describe('Windows Cross-Drive Shim Generator', () => {
   it('generates absolute target paths when source and destination are on different Windows drives', () => {
@@ -114,6 +115,7 @@ describe('Windows Cross-Drive Shim Generator', () => {
       const checks = await runDoctorChecks({
         homeDir: tempHome,
         cliDistPath: process.argv[1],
+        platform: getPlatform('win32'),
       });
 
       const cliCheck = checks.find((c) => c.name === 'Global CLI (sm)');

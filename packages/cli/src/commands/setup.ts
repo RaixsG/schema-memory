@@ -21,7 +21,8 @@ import {
   detectEphemeralRunner,
   isWithinDir,
   type EphemeralRunner,
-} from '../platform.js';
+  getPlatform,
+} from '../platform/index.js';
 import {
   readSetupState,
   writeSetupState,
@@ -209,57 +210,20 @@ export interface LinkCliResult {
  * - Unix: keeps the chmod + symlink approach.
  */
 export async function linkCliBinary(cliDistPath: string): Promise<LinkCliResult> {
-  const binDir = getBinDir();
-  const onPath = findCommandOnPath('sm') ?? findCommandOnPath('schema-memory');
-
-  if (onPath && !isWithinDir(onPath, binDir)) {
-    return {
-      binDir,
-      linked: false,
-      detail: `already available on PATH (${onPath})`,
-    };
-  }
-
-  await ensureDir(binDir);
-
-  if (isWindows) {
-    for (const name of ['sm', 'schema-memory']) {
-      const target = resolve(binDir, name);
-      await createWindowsShim(cliDistPath, target);
-    }
-  } else {
-    await chmod(cliDistPath, 0o755);
-    for (const name of ['sm', 'schema-memory']) {
-      const linkPath = resolve(binDir, name);
-      await rm(linkPath, { force: true });
-      await symlink(cliDistPath, linkPath);
-    }
-  }
-
-  const detail = isDirOnPath(binDir)
-    ? `${binDir} (already on PATH)`
-    : `${binDir} (NOT on PATH)`;
-  return { binDir, linked: true, detail };
+  const platform = getPlatform();
+  const binDir = platform.getBinDir();
+  return platform.linkCli(cliDistPath, binDir);
 }
 
 function printPathHint(binDir: string): void {
+  const platform = getPlatform();
   console.log(
     `\nℹ️  "${binDir}" is not on your PATH, so the "sm" command will not resolve in new terminals.`
   );
-  if (isWindows) {
-    console.log(
-      '   Option A (recommended): run via "npx schema-memory" / "bunx schema-memory", or install globally with "npm i -g schema-memory" / "bun add -g schema-memory".'
-    );
-    console.log(
-      '   Option B: add "%USERPROFILE%\\.local\\bin" to your user PATH via "Settings > System > About > Advanced system settings > Environment Variables".'
-    );
-  } else {
-    console.log(
-      '   Option A (recommended): run via "npx schema-memory" / "bunx schema-memory", or install globally with "npm i -g schema-memory" / "bun add -g schema-memory".'
-    );
-    console.log('   Option B: add the following to your shell profile (~/.zshrc, ~/.bashrc):');
-    console.log(`     export PATH="${binDir}:$PATH"`);
-  }
+  console.log(
+    '   Option A (recommended): run via "npx schema-memory" / "bunx schema-memory", or install globally with "npm i -g schema-memory" / "bun add -g schema-memory".'
+  );
+  console.log(`   Option B: ${platform.getPathHint(binDir)}.`);
 }
 
 export interface SetupCommandOptions {

@@ -9,9 +9,8 @@ import {
   normalizePathKey,
   getRegistryDir,
 } from '@schema-memory/core';
-import { findCommandOnPath, fallbackShimExists, isWindows } from '../platform.js';
+import { getPlatform, type PlatformAdapter } from '../platform/index.js';
 import { readSetupState } from '../setup-state.js';
-import { isCorruptedShimContent } from '../windows-shim.js';
 
 export interface DoctorCheckResult {
   name: string;
@@ -23,12 +22,14 @@ export async function runDoctorChecks(options?: {
   homeDir?: string;
   cwd?: string;
   cliDistPath?: string;
+  platform?: PlatformAdapter;
 }): Promise<DoctorCheckResult[]> {
   const home = options?.homeDir || homedir();
   const cwd = options?.cwd || process.cwd();
   const currentFile = fileURLToPath(import.meta.url);
   const cliDistPath =
     options?.cliDistPath || resolve(dirname(currentFile), '..', 'dist', 'index.js');
+  const platform = options?.platform || getPlatform();
 
   const results: DoctorCheckResult[] = [];
 
@@ -43,55 +44,14 @@ export async function runDoctorChecks(options?: {
   });
 
   // 2. Global CLI command (npm/pnpm/bun shims on PATH or fallback ~/.local/bin shims)
-  const smOnPath = findCommandOnPath('sm') ?? findCommandOnPath('schema-memory');
-  const fallbackShim = fallbackShimExists(resolve(home, '.local', 'bin'));
-  const smBinExists = smOnPath !== null || fallbackShim !== null;
-
+  const smOnPath = platform.findCommandOnPath('sm') ?? platform.findCommandOnPath('schema-memory');
   const localBinDir = resolve(home, '.local', 'bin');
-  const candidateFiles = [
-    smOnPath,
-    fallbackShim,
-    resolve(localBinDir, 'sm.cmd'),
-    resolve(localBinDir, 'sm.ps1'),
-    resolve(localBinDir, 'sm'),
-    resolve(localBinDir, 'schema-memory.cmd'),
-    resolve(localBinDir, 'schema-memory.ps1'),
-    resolve(localBinDir, 'schema-memory'),
-  ].filter((p): p is string => Boolean(p && existsSync(p)));
+  const cliHealth = await platform.checkCliHealth(localBinDir, smOnPath);
 
-  let corruptedShimPath: string | null = null;
-  for (const file of candidateFiles) {
-    try {
-      const content = await readIfExists(file);
-      if (content && isCorruptedShimContent(content)) {
-        corruptedShimPath = file;
-        break;
-      }
-    } catch {
-      // ignore read error
-    }
-  }
-
-  let smOk = smBinExists;
-  let smDetail: string;
-  if (corruptedShimPath) {
-    smOk = false;
-    smDetail = `Corrupted cross-drive shim detected at "${corruptedShimPath}". Run "sm setup --cli-only" (or "pnpm sm setup --cli-only") to repair.`;
-  } else if (smOnPath) {
-    smDetail = `Resolved on PATH: ${smOnPath}`;
-  } else if (fallbackShim) {
-    smDetail = isWindows
-      ? `Found fallback shim at "${fallbackShim}", but directory is not on PATH. Fix: run "npm i -g schema-memory" or add "%USERPROFILE%\\.local\\bin" to PATH.`
-      : `Found fallback shim at "${fallbackShim}", but directory is not on PATH. Fix: run "npm i -g schema-memory" or add "export PATH=\\"$HOME/.local/bin:$PATH\\"" to ~/.zshrc or ~/.bashrc.`;
-  } else {
-    smDetail = isWindows
-      ? `Not on PATH. Fix: run "npm i -g schema-memory" or add "%USERPROFILE%\\.local\\bin" to PATH.`
-      : `Not on PATH. Fix: run "npm i -g schema-memory" or add "export PATH=\\"$HOME/.local/bin:$PATH\\"" to ~/.zshrc or ~/.bashrc.`;
-  }
   results.push({
     name: 'Global CLI (sm)',
-    ok: smOk,
-    detail: smDetail,
+    ok: cliHealth.ok,
+    detail: cliHealth.detail,
   });
 
   // 3. Setup completion status
