@@ -19,7 +19,7 @@ const version = pkg.version;
 const distBin = resolve(rootDir, 'dist-bin');
 
 if (!existsSync(cliDist)) {
-  console.error('❌ packages/cli/dist/index.js not found. Run "pnpm bundle:cli" first.');
+  console.error('❌ packages/cli/dist/index.js not found. Run "pnpm build" first.');
   process.exit(1);
 }
 

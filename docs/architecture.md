@@ -99,15 +99,23 @@ Servidor HTTP local montado sobre **Hono**:
 - **Seguridad**: Middleware de verificación estricta de `Host` y `Origin` anti DNS-rebinding (solo admite invocaciones locales).
 - **Manejo de Gzip**: Middleware `gunzipRequestMiddleware` para descompresión transparente de cuerpos de petición entrantes (`Content-Encoding: gzip`) y compresión automática de respuestas salientes (excluyendo streams SSE `/events`).
 - **Caché Condicional ETag**: Endpoint `/api/projects/:id/schema` calcula ETags y responde `304 Not Modified` cuando el fingerprint no ha variado.
-- **`fs-browser.ts`**: API para navegar unidades y carpetas del disco local dentro del modal de agregar proyecto en la UI web (con soporte completo de unidades Windows `C:`, `D:`, etc.).
+- **`fs-browser.ts`**: API para navegar unidades y carpetas del disco local dentro del modal de agregar proyecto en la UI web (sondeo dinámico de unidades Windows `A:\` a `Z:\` y montajes POSIX `/Volumes`, `/mnt`, `/media` sin caché estático para reflejar unidades insertadas o montadas al vuelo).
 - **Modo Producción & Caché de Activos**: Sirve los activos precompilados de `apps/web/dist` con encabezados `Cache-Control: public, max-age=31536000, immutable` en `/assets/*`.
 
 ### 3.4 `@schema-memory/cli` (`packages/cli/`)
 Punto de entrada empaquetado para distribución en npm:
-- **Empaquetado Autocontenido (Zero External Fetch)**: Durante el build, los activos estáticos compilados de `apps/web/dist` se copian dentro de `packages/cli/dist/web/`. Al ejecutar `npx schema-memory` o `sm`, el servidor sirve la aplicación SPA directamente desde el paquete local, garantizando funcionamiento 100% offline y sin descargas externas.
-- Comandos: `ui` (por defecto, alias `sm`), `add` (alias: `init`), `status` (alias: `ls`), `remove` (alias: `rm`), `mcp`, `setup` y `doctor`.
-- Shims multiplataforma para macOS, Linux y Windows (`.cmd` y `.ps1` nativos sin Developer Mode ni permisos de administrador).
-- Detección interactiva de primera ejecución para ofrecer `sm setup`.
+- **Empaquetado Autocontenido (Zero External Fetch & Zero Runtime External Dependencies)**: Durante el build, los activos estáticos compilados de `apps/web/dist` se copian dentro de `packages/cli/dist/web/`. `tsup` empaqueta todas las dependencias (`noExternal: [/(.*)/]`), garantizando un bundle único 100% autocontenido y sin dependencias externas de runtime.
+- **Capa Modular de Adaptadores de Plataforma (`src/platform/`)**:
+  - Contrato unificado `PlatformAdapter` (`types.ts`) consumido mediante la factoría `getPlatform()`.
+  - `WindowsPlatformAdapter`: Shims nativos `.cmd`, `.ps1` y `sh` con soporte cross-drive (rutas absolutas al cruzar discos `E:\` vs `C:\`), detección y reparación automática de shims corruptos, terminación de árbol de procesos mediante `taskkill /pid ... /T /F`, apertura segura de URLs con sanitización de `&` (`cmd.exe /c start "" "${url}"`) y separación de PATH por `;`.
+  - `BasePosixPlatformAdapter` (`DarwinPlatformAdapter` y `LinuxPlatformAdapter`): Creación de symlinks con permisos ejecutables `0o755`, terminación limpia vía `SIGTERM`, comandos de navegador según el SO (`open` en macOS, `xdg-open` en Linux) y sugerencias de configuración para `~/.zshrc` o `~/.bashrc`.
+- **Gestión de Daemon en Segundo Plano (`daemon.ts`)**:
+  - Permite ejecutar la UI desvinculada de la terminal en segundo plano (`sm` / `sm start`, `sm stop`, `sm restart`, `sm status`), persistiendo metadatos en `~/.schema-memory/ui.json` (`{ pid, port, url, startedAt }`).
+  - Flag `--foreground` para ejecución bloqueante en contenedores o desarrollo.
+  - Sonda de salud HTTP contra `/healthz` y fallback automático de puertos (reintenta puertos 4317 a 4327 en caso de `EADDRINUSE`).
+- **Auto-Build Inteligente (`scripts/ensure-build.mjs`)**:
+  - Guardián en scripts de desarrollo (`pnpm ui`, `pnpm start`, `pnpm doctor`, etc.) que compara el `mtime` de los paquetes fuente contra `packages/cli/dist/index.js` y auto-compila en ~300ms solo cuando detecta cambios.
+- **Detección interactiva de primera ejecución** para ofrecer `sm setup` si los agentes no están configurados.
 
 ### 3.5 `apps/web` (`apps/web/`)
 Single Page Application reactiva:

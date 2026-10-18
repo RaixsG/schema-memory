@@ -25,6 +25,13 @@ mi-proyecto/
 └── AGENTS.md                   # Bloque delimitado de guardrails para agentes de IA
 ```
 
+### 1.1 Adopción de Repositorios Existentes o Clonados (`mode: 'adopt'`)
+Cuando un desarrollador clona un proyecto que ya contiene `.schema-memory/` en Git:
+- **Detección Automática**: Al vincular el proyecto vía CLI (`sm add`) o Web UI, `schema-memory` detecta la configuración existente (`mode: 'adopt'`) sin sobrescribir `schema.dbml` ni reiniciar el historial de ADRs.
+- **Resolución de Conflictos de ID (`ProjectConflictError`)**: Si el `id` ya estaba registrado en `~/.schema-memory/projects.json` en otra ruta de la máquina (ej. clon duplicado o cambio de directorio), el sistema ofrece dos vías de resolución idempotente:
+  - `replace`: Actualiza la ruta registrada para que apunte al nuevo directorio.
+  - `new`: Genera un nuevo sufijo numérico (`mi-proyecto-2`) preservando el registro anterior.
+
 ---
 
 ## 2. Contrato de Archivos

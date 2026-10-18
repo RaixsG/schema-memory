@@ -40,18 +40,27 @@ Este comando ejecuta concurrentemente:
 1. Servidor Hono en `http://127.0.0.1:4317`.
 2. Servidor Vite en `http://localhost:5173` con recarga ultrarrápida y proxy inverso configurado hacia la API.
 
-### 3.2 Modo Aplicación Completa (Build Embebido)
+### 3.2 Modo Aplicación Completa (Build Embebido y Daemon)
 Para verificar la experiencia idéntica a producción con los activos de la UI empaquetados dentro de la API:
 ```bash
+# Inicia el daemon en background (auto-compila si detecta cambios en código fuente)
 pnpm ui
+
+# Inspeccionar estado o detener el servidor
+pnpm status
+pnpm stop
+pnpm restart
 ```
+
+> [!TIP]
+> **Auto-Build Inteligente**: Los scripts de desarrollo (`pnpm ui`, `pnpm start`, `pnpm doctor`, `pnpm status`, `pnpm sm`) incorporan el guardián `scripts/ensure-build.mjs`. Si detecta modificaciones recientes en los paquetes fuente, recompila automáticamente en ~300ms antes de ejecutar el comando. En ejecuciones posteriores sin cambios, el chequeo toma menos de 15ms.
 
 ### 3.3 Enlazar el CLI Localmente
 Para probar los comandos globales `sm` y `schema-memory` en tu terminal usando el build de tu repositorio:
 ```bash
 pnpm link-cli
 ```
-Esto crea los symlinks correspondientes en `~/.local/bin/` (o shims `.cmd`/`.ps1` en Windows).
+Esto crea los symlinks correspondientes en `~/.local/bin/` (o shims `.cmd`/`.ps1`/`sh` con resolución nativa cross-drive en Windows).
 
 > [!NOTE]
 > **Subcomandos de pnpm**: Para ejecutar comandos del CLI desde el monorepo con `pnpm`, antepón siempre `sm` (ej. `pnpm sm setup` o `pnpm sm doctor`), ya que `pnpm setup` sin `sm` es un comando reservado interno del gestor de paquetes pnpm para configurar el PATH.
@@ -76,18 +85,26 @@ pnpm --filter schema-memory test
 
 ---
 
-## 5. Compilación de Binarios Standalone
+## 5. Compilación de Binarios Standalone (Release Automatizado)
 
-`schema-memory` puede compilarse en ejecutables binarios autónomos sin necesidad de tener Node.js instalado en la máquina destino:
+`schema-memory` se compila automáticamente en ejecutables autónomos durante el pipeline de release de GitHub Actions (`release.yml`), sin requerir Node.js en la máquina del usuario final.
 
+Si deseas probar la compilación de binarios en tu máquina local (requiere tener Bun instalado):
 ```bash
-# Compilar binarios multiplataforma en dist-bin/
+# 1. Asegurar el build del monorepo
+pnpm build
+
+# 2. Compilar binarios multiplataforma en dist-bin/
 pnpm build:binaries
 ```
-Esto genera ejecutables para:
+Esto genera ejecutables empaquetados en `.tar.gz` para:
 - macOS Apple Silicon (`arm64`) y macOS Intel (`x64`)
 - Linux (`x64`)
 - Windows (`x64`)
+
+> [!NOTE]
+> En el desarrollo cotidiano local no es necesario generar estos binarios; el flujo de trabajo estándar utiliza `pnpm dev` o `pnpm ui`.
+
 
 ---
 
@@ -103,11 +120,39 @@ pnpm pack:cli
 Durante el build de `packages/cli`:
 1. `apps/web` compila su bundle estático en `dist/web`.
 2. El archivo raíz `README.md` y `LICENSE` se sincronizan automáticamente en `packages/cli/`.
-3. `tsup` genera el binario ejecutable final en `packages/cli/dist/index.js`.
+3. `tsup` genera el binario ejecutable final en `packages/cli/dist/index.js` empaquetando todas las dependencias (`noExternal: [/(.*)/]`), garantizando un bundle 100% autocontenido y sin dependencias externas de runtime.
 
 ---
 
-## 7. Convenciones de Código
+## 7. Versionado y Publicación de Releases
+
+El repositorio incluye un script automatizado (`scripts/release.mjs`) para sincronizar la versión de todos los paquetes del monorepo (`package.json`, `packages/*`, `apps/*`), generar el commit `chore(release): vX.Y.Z`, crear el tag anotado y pushear todo a la rama `main`:
+
+```bash
+# Simular cambios sin modificar archivos ni hacer git push (dry-run)
+pnpm release patch --dry-run
+
+# Incrementar versión de parche (ej. 0.1.2 -> 0.1.3), commitear, taggear y pushear a main
+pnpm release patch
+
+# Incrementar versión menor o mayor
+pnpm release minor
+pnpm release major
+
+# Especificar una versión exacta
+pnpm release 0.2.0
+
+# Crear commit y tag localmente sin hacer git push
+pnpm release patch --no-push
+```
+
+> [!NOTE]
+> Al pushear el tag `v*` a `origin`, el workflow de CI/CD (`.github/workflows/release.yml`) se dispara automáticamente para compilar los paquetes, generar los binarios standalone (`dist-bin/`) y publicar el paquete CLI en npm y en GitHub Releases.
+
+---
+
+## 8. Convenciones de Código
 
 - **TypeScript Estricto**: `strict: true`, módulos ESM nativos (`"type": "module"`).
 - **Commits**: Seguir el estándar [Conventional Commits](https://www.conventionalcommits.org/) (`feat:`, `fix:`, `docs:`, `refactor:`, `test:`).
+

@@ -50,7 +50,7 @@ pnpm dlx schema-memory
 
 ### Opción B: Instalar el CLI global `sm`
 
-Para disponer del comando corto **`sm`** en tu terminal en **macOS, Linux y Windows**:
+Para disponer del comando corto **`sm`** en tu terminal en **macOS, Linux y Windows** (con soporte nativo para proyectos en cualquier unidad de disco como `C:`, `D:`, `E:` sin requerir modo desarrollador ni permisos de administrador):
 
 ```bash
 # 1. Instalar globalmente
@@ -61,8 +61,12 @@ bun add -g schema-memory
 # 2. Configurar agentes de IA (OpenCode, Antigravity y skills globales)
 sm setup
 
-# 3. Iniciar la interfaz web
+# 3. Iniciar la interfaz web en segundo plano (daemon)
 sm
+
+# 4. Detener o reiniciar el servidor cuando lo desees
+sm stop
+sm restart
 ```
 
 ---
@@ -87,12 +91,14 @@ flowchart LR
 
 | Comando | Alias | Descripción |
 | :--- | :--- | :--- |
-| `sm` | `sm ui` | Inicia la API local y abre el canvas visual en `http://127.0.0.1:4317` (puerto configurable con `-p / --port`). |
-| `sm add [ruta]` | `sm init` | Vincula un proyecto a schema-memory (por defecto directorio actual `.`). |
-| `sm status` | `sm ls` | Muestra el estado de proyectos registrados, cambios pendientes y ADRs. |
+| `sm` | `sm ui`, `sm start` | Inicia la UI y API en segundo plano en `http://127.0.0.1:4317` (puerto configurable con `-p / --port`, flag `--foreground` para ejecución bloqueante). |
+| `sm stop` | — | Detiene limpiamente el proceso del servidor UI en segundo plano. |
+| `sm restart` | — | Reinicia la UI en segundo plano y reabre el navegador si es necesario. |
+| `sm status` | `sm ls` | Muestra el estado del servidor UI (activo/PID o detenido), proyectos vinculados, cambios pendientes y ADRs. |
+| `sm add [ruta]` | `sm init` | Vincula un proyecto a `schema-memory` (detecta automáticamente proyectos existentes clonados). |
 | `sm remove [id]` | `sm rm` | Desvincula un proyecto de `schema-memory`. |
 | `sm setup` | — | Configura de forma no destructiva los servidores MCP y skills (`--target all\|opencode\|antigravity`). |
-| `sm doctor` | — | Diagnóstico de salud de registro MCP, binarios en el PATH y estado de proyectos. |
+| `sm doctor` | — | Diagnóstico de salud de registro MCP, binarios en el PATH, shims y estado de proyectos. |
 | `sm mcp` | — | Inicia el servidor MCP sobre `stdio` para comunicación directa con agentes. |
 
 ---
