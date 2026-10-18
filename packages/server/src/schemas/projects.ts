@@ -10,6 +10,7 @@ export const addProjectSchema = z.object({
   name: z.string().optional(),
   dialect: z.enum(['postgres', 'sqlite', 'mysql']).optional(),
   installProjectSkill: z.boolean().optional(),
+  resolveConflict: z.enum(['replace', 'new']).optional(),
 });
 
 export const removeProjectQuerySchema = z.object({

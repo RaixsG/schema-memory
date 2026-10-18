@@ -72,6 +72,48 @@ program
   .description('Live database schema memory & ADR workflow for AI pair programming')
   .version(getCliVersion());
 
+async function offerRegisterCwdProject(): Promise<string | undefined> {
+  const { detectProjectFromCwd } = await import('./detect.js');
+  const detected = await detectProjectFromCwd();
+  if (!detected) return undefined;
+  if (detected.registered) return detected.registeredId;
+
+  console.log(
+    `\n📦 Detected schema-memory project "${detected.config.name}" in ${detected.path}, not registered on this machine yet.`
+  );
+  if (!process.stdin.isTTY || !process.stdout.isTTY) return undefined;
+
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  const answer = await new Promise<string>((resolveAnswer) => {
+    rl.question('   Register it now? (Y/n) ', (value) => {
+      rl.close();
+      resolveAnswer(value);
+    });
+  });
+  const normalized = answer.trim().toLowerCase();
+  if (normalized !== '' && normalized !== 'y' && normalized !== 'yes') {
+    return undefined;
+  }
+
+  const { planAddProject, applyAddProject, ProjectConflictError } = await import(
+    '@schema-memory/core'
+  );
+  try {
+    const plan = await planAddProject(detected.path);
+    const config = await applyAddProject(plan, {});
+    console.log(`   ✅ Registered "${config.name}" (id: ${config.id}).`);
+    return config.id;
+  } catch (err: any) {
+    if (err instanceof ProjectConflictError) {
+      console.log(
+        `   ⚠️  Id "${err.id}" is already registered at ${err.existingPath}. Run "sm add --replace" or "sm add --new" to resolve.`
+      );
+      return undefined;
+    }
+    throw err;
+  }
+}
+
 program
   .command('ui', { isDefault: true })
   .description('Start the local web UI and API server (default command)')
@@ -81,8 +123,9 @@ program
   .action(async (opts) => {
     try {
       await offerFirstRunSetup();
+      const projectId = await offerRegisterCwdProject();
       const { uiCommand } = await import('./commands/ui.js');
-      await uiCommand(opts);
+      await uiCommand({ ...opts, projectId });
     } catch (err: any) {
       console.error('Error starting UI:', err.message);
       process.exit(1);
@@ -97,6 +140,8 @@ program
   .option('-d, --dialect <dialect>', 'Database dialect (postgres, mysql, sqlite, etc.)')
   .option('-y, --yes', 'Skip confirmation prompt')
   .option('--project-skill', 'Install custom project skill in .agents/')
+  .option('--replace', 'If the project id is registered at another path, replace that path')
+  .option('--new', 'If the project id is registered at another path, register this one with a new id')
   .action(async (targetPath = '.', opts) => {
     try {
       const { addCommand } = await import('./commands/add.js');

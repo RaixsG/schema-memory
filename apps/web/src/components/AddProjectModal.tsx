@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { api } from '../api';
+import { api, ApiError } from '../api';
 import { DirectoryEntry } from '../types';
 import {
   X,
@@ -35,6 +35,9 @@ export function AddProjectModal({ onClose, onAdded }: { onClose: () => void; onA
   const [bootstrapPrompt, setBootstrapPrompt] = useState('');
   const [copied, setCopied] = useState(false);
   const [createdProjectId, setCreatedProjectId] = useState('');
+  const [adopted, setAdopted] = useState(false);
+  const [needsBootstrap, setNeedsBootstrap] = useState(true);
+  const [conflict, setConflict] = useState<{ id: string; existingPath: string } | null>(null);
 
   // Load directories
   const loadDirectory = async (path?: string) => {
@@ -79,6 +82,15 @@ export function AddProjectModal({ onClose, onAdded }: { onClose: () => void; onA
       const res = await api.planProject(selectedPath);
       setPlan(res.plan);
       setProjectName(res.plan.defaultName);
+      // Same id already registered for another path: ask before registering.
+      setConflict(
+        res.plan.mode === 'adopt' && res.plan.registry?.conflict
+          ? {
+              id: res.plan.registry.conflict.id,
+              existingPath: res.plan.registry.conflict.path,
+            }
+          : null
+      );
       setStep(2);
     } catch (err: any) {
       setError(err.message);
@@ -87,23 +99,39 @@ export function AddProjectModal({ onClose, onAdded }: { onClose: () => void; onA
     }
   };
 
-  const handleApply = async () => {
+  const handleApply = async (resolveConflict?: 'replace' | 'new') => {
     setLoading(true);
     setError(null);
     try {
+      const isAdopt = plan?.mode === 'adopt';
       const res = await api.addProject({
         path: selectedPath,
-        name: projectName.trim(),
-        dialect: projectDialect,
-        installProjectSkill: installSkill,
+        // Adopt keeps the repo's own name/dialect; never send form defaults.
+        ...(isAdopt
+          ? {}
+          : {
+              name: projectName.trim(),
+              dialect: projectDialect,
+              installProjectSkill: installSkill,
+            }),
+        ...(resolveConflict ? { resolveConflict } : {}),
       });
 
-      const promptRes = await api.getBootstrapPrompt(res.project.id);
-      setBootstrapPrompt(promptRes.prompt);
+      setAdopted(res.adopted);
+      setNeedsBootstrap(res.needsBootstrap);
+      if (res.needsBootstrap) {
+        const promptRes = await api.getBootstrapPrompt(res.project.id);
+        setBootstrapPrompt(promptRes.prompt);
+      }
       setCreatedProjectId(res.project.id);
+      setConflict(null);
       setStep(4);
     } catch (err: any) {
-      setError(err.message);
+      if (err instanceof ApiError && err.status === 409 && err.body?.code === 'PROJECT_CONFLICT') {
+        setConflict({ id: err.body.id, existingPath: err.body.existingPath });
+      } else {
+        setError(err.message);
+      }
     } finally {
       setLoading(false);
     }
@@ -309,8 +337,100 @@ export function AddProjectModal({ onClose, onAdded }: { onClose: () => void; onA
             </div>
           )}
 
+          {/* STEP 2 (adopt): repo already configured */}
+          {step === 2 && plan?.mode === 'adopt' && plan.existing && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+              <div
+                style={{
+                  padding: 14,
+                  backgroundColor: 'var(--bg-tertiary)',
+                  border: '1px solid var(--accent)',
+                  borderRadius: 8,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 6,
+                  fontSize: 13,
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <CheckCircle size={18} color="var(--success)" />
+                  <strong>Proyecto detectado: {plan.existing.name}</strong>
+                  {plan.registry.registered && (
+                    <span className="badge badge-green">ya registrado</span>
+                  )}
+                </div>
+                <div style={{ color: 'var(--text-secondary)', fontSize: 12 }}>
+                  ID: <code>{plan.existing.id}</code> · Dialecto: <strong>{plan.existing.dialect}</strong>
+                </div>
+                <div style={{ color: 'var(--text-secondary)', fontSize: 12 }}>
+                  {plan.existing.tablesCount} tablas · {plan.existing.adrCount} ADRs · creado{' '}
+                  {new Date(plan.existing.createdAt).toLocaleDateString()}
+                </div>
+                <p style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 4 }}>
+                  Este repositorio ya está configurado. Solo se registrará en esta
+                  máquina; <code>.schema-memory/</code> no se sobrescribe.
+                </p>
+              </div>
+
+              {plan.actions.length > 0 && (
+                <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+                  Cambio menor: {plan.actions.map((a: any) => a.file).join(', ')} (bloque gestionado de reglas).
+                </div>
+              )}
+
+              {conflict && (
+                <div
+                  style={{
+                    padding: 14,
+                    border: '1px solid var(--warning)',
+                    borderRadius: 8,
+                    fontSize: 12,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 10,
+                  }}
+                >
+                  <div style={{ color: 'var(--warning)', fontWeight: 600 }}>
+                    ⚠️ Ya existe un proyecto <code>{conflict.id}</code> registrado en otra ruta:
+                  </div>
+                  <code style={{ fontFamily: 'var(--font-mono)' }}>{conflict.existingPath}</code>
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                    <button
+                      className="btn btn-secondary"
+                      disabled={loading}
+                      onClick={() => handleApply('replace')}
+                    >
+                      Reemplazar la ruta anterior
+                    </button>
+                    <button
+                      className="btn btn-secondary"
+                      disabled={loading}
+                      onClick={() => handleApply('new')}
+                    >
+                      Registrar como nuevo (ID distinto)
+                    </button>
+                    <button className="btn btn-secondary" onClick={() => setConflict(null)}>
+                      Cancelar
+                    </button>
+                  </div>
+                  <span style={{ color: 'var(--text-muted)' }}>
+                    "Como nuevo" actualiza el <code>id</code> en <code>.schema-memory/config.json</code> de este repo.
+                  </span>
+                </div>
+              )}
+
+              {plan.warnings.length > 0 && (
+                <div style={{ color: 'var(--warning)', fontSize: 12 }}>
+                  {plan.warnings.map((w: string, i: number) => (
+                    <div key={i}>⚠️ {w}</div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
           {/* STEP 2: Dry Run Plan */}
-          {step === 2 && plan && (
+          {step === 2 && plan && plan.mode !== 'adopt' && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
               <div>
                 <h4 style={{ fontSize: 14, fontWeight: 600 }}>Vista Previa de Cambios (Dry Run)</h4>
@@ -417,48 +537,54 @@ export function AddProjectModal({ onClose, onAdded }: { onClose: () => void; onA
                 <CheckCircle size={44} color="var(--success)" />
               </div>
               <div>
-                <h4 style={{ fontSize: 16, fontWeight: 700 }}>¡Proyecto Acoplado con Éxito!</h4>
+                <h4 style={{ fontSize: 16, fontWeight: 700 }}>
+                  {adopted ? '¡Proyecto registrado!' : '¡Proyecto Acoplado con Éxito!'}
+                </h4>
                 <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginTop: 4 }}>
-                  Se han configurado los archivos en el repositorio.
+                  {adopted
+                    ? 'Se reutilizó la configuración existente del repositorio (sin modificarla).'
+                    : 'Se han configurado los archivos en el repositorio.'}
                 </p>
               </div>
 
-              <div
-                style={{
-                  textAlign: 'left',
-                  backgroundColor: 'var(--bg-tertiary)',
-                  border: '1px solid var(--accent)',
-                  borderRadius: 8,
-                  padding: 14,
-                }}
-              >
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--accent)', fontWeight: 600, fontSize: 13, marginBottom: 8 }}>
-                  <Sparkles size={16} />
-                  <span>Prompt de arranque inicial para tu Agente IA</span>
-                </div>
-                <p style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 8 }}>
-                  Envía este mensaje a tu agente en tu terminal o IDE para que inspeccione el código y genere el esquema canónico inicial:
-                </p>
-                <pre
+              {needsBootstrap && (
+                <div
                   style={{
-                    backgroundColor: 'var(--bg-primary)',
-                    padding: 10,
-                    borderRadius: 6,
-                    fontSize: 11,
-                    fontFamily: 'var(--font-mono)',
-                    whiteSpace: 'pre-wrap',
+                    textAlign: 'left',
+                    backgroundColor: 'var(--bg-tertiary)',
+                    border: '1px solid var(--accent)',
+                    borderRadius: 8,
+                    padding: 14,
                   }}
                 >
-                  {bootstrapPrompt}
-                </pre>
-                <button
-                  className="btn btn-primary"
-                  style={{ width: '100%', marginTop: 10 }}
-                  onClick={handleCopyPrompt}
-                >
-                  {copied ? <Check size={14} /> : <Copy size={14} />} {copied ? 'Copiado al portapapeles' : 'Copiar Prompt para la IA'}
-                </button>
-              </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--accent)', fontWeight: 600, fontSize: 13, marginBottom: 8 }}>
+                    <Sparkles size={16} />
+                    <span>Prompt de arranque inicial para tu Agente IA</span>
+                  </div>
+                  <p style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 8 }}>
+                    Envía este mensaje a tu agente en tu terminal o IDE para que inspeccione el código y genere el esquema canónico inicial:
+                  </p>
+                  <pre
+                    style={{
+                      backgroundColor: 'var(--bg-primary)',
+                      padding: 10,
+                      borderRadius: 6,
+                      fontSize: 11,
+                      fontFamily: 'var(--font-mono)',
+                      whiteSpace: 'pre-wrap',
+                    }}
+                  >
+                    {bootstrapPrompt}
+                  </pre>
+                  <button
+                    className="btn btn-primary"
+                    style={{ width: '100%', marginTop: 10 }}
+                    onClick={handleCopyPrompt}
+                  >
+                    {copied ? <Check size={14} /> : <Copy size={14} />} {copied ? 'Copiado al portapapeles' : 'Copiar Prompt para la IA'}
+                  </button>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -484,14 +610,24 @@ export function AddProjectModal({ onClose, onAdded }: { onClose: () => void; onA
             </button>
           )}
 
-          {step === 2 && (
+          {step === 2 && plan?.mode === 'adopt' && (
+            <button
+              className="btn btn-primary"
+              onClick={() => handleApply()}
+              disabled={loading || !!conflict}
+            >
+              Registrar proyecto
+            </button>
+          )}
+
+          {step === 2 && plan?.mode !== 'adopt' && (
             <button className="btn btn-primary" onClick={() => setStep(3)}>
               Configurar <ArrowRight size={14} />
             </button>
           )}
 
           {step === 3 && (
-            <button className="btn btn-primary" onClick={handleApply} disabled={loading || !projectName.trim()}>
+            <button className="btn btn-primary" onClick={() => handleApply()} disabled={loading || !projectName.trim()}>
               Confirmar y Acoplar Proyecto
             </button>
           )}

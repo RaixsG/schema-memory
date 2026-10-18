@@ -3,8 +3,15 @@ import { stat, rm } from 'node:fs/promises';
 import { ProjectConfig, Dialect } from './model.js';
 import { atomicWrite, readIfExists, ensureDir, removeIfExists } from './fsx.js';
 import { detectStack } from './stack.js';
-import { registerProject, unregisterProject, listProjects } from './registry.js';
+import {
+  registerProject,
+  unregisterProject,
+  listProjects,
+  normalizePathKey,
+} from './registry.js';
 import { writeConfig, readConfig } from './config.js';
+import { parseSchema } from './dbml.js';
+import { countAdrsStatus } from './adr.js';
 
 export interface ScaffoldAction {
   op: 'create' | 'modify';
@@ -13,14 +20,57 @@ export interface ScaffoldAction {
   diff?: string;
 }
 
+/** Summary of a project whose `.schema-memory/` already exists in the repo. */
+export interface ExistingProjectInfo {
+  id: string;
+  name: string;
+  dialect: Dialect;
+  createdAt: string;
+  tablesCount: number;
+  adrCount: number;
+  hasSchema: boolean;
+}
+
 export interface ScaffoldPlan {
   path: string;
   defaultId: string;
   defaultName: string;
   alreadyAdded: boolean;
+  /**
+   * `new`: repo has no `.schema-memory/config.json` yet (full scaffold).
+   * `adopt`: repo is already configured; only register it locally.
+   */
+  mode: 'new' | 'adopt';
+  existing?: ExistingProjectInfo;
+  registry: {
+    /** True when this exact path is already in the local registry. */
+    registered: boolean;
+    /** Local registry entry with the same id but a DIFFERENT path. */
+    conflict?: { id: string; path: string };
+  };
+  /** True when schema.dbml is missing or defines no tables yet. */
+  needsBootstrap: boolean;
   stack: string[];
   actions: ScaffoldAction[];
   warnings: string[];
+}
+
+export type ConflictResolution = 'replace' | 'new';
+
+/**
+ * Thrown when adopting a configured repo whose `id` is already registered
+ * locally for a different path. Callers must choose `replace` or `new`.
+ */
+export class ProjectConflictError extends Error {
+  constructor(
+    public id: string,
+    public existingPath: string
+  ) {
+    super(
+      `Project id "${id}" is already registered at "${existingPath}". Choose to replace that path or register this one as a new project.`
+    );
+    this.name = 'ProjectConflictError';
+  }
 }
 
 export function slugify(text: string): string {
@@ -86,6 +136,36 @@ export function updateAgentsMdContent(
   };
 }
 
+async function summarizeExisting(
+  absPath: string,
+  config: ProjectConfig
+): Promise<{ info: ExistingProjectInfo; needsBootstrap: boolean }> {
+  const schemaRaw = await readIfExists(
+    resolve(absPath, '.schema-memory', 'schema.dbml')
+  );
+  let tablesCount = 0;
+  if (schemaRaw && schemaRaw.trim()) {
+    try {
+      tablesCount = parseSchema(schemaRaw).tables.length;
+    } catch {
+      tablesCount = 0;
+    }
+  }
+  const adrCounts = await countAdrsStatus(absPath);
+  return {
+    info: {
+      id: config.id,
+      name: config.name,
+      dialect: config.dialect,
+      createdAt: config.createdAt,
+      tablesCount,
+      adrCount: adrCounts.totalAdrs,
+      hasSchema: tablesCount > 0,
+    },
+    needsBootstrap: tablesCount === 0,
+  };
+}
+
 export async function planAddProject(repoPath: string): Promise<ScaffoldPlan> {
   const absPath = resolve(repoPath);
   const s = await stat(absPath);
@@ -95,16 +175,42 @@ export async function planAddProject(repoPath: string): Promise<ScaffoldPlan> {
 
   const defaultName = basename(absPath);
   const defaultId = slugify(defaultName);
-  const existingConfig = await readConfig(absPath);
-  const alreadyAdded = existingConfig !== null;
-  const stack = await detectStack(absPath);
   const warnings: string[] = [];
+
+  let existingConfig: ProjectConfig | null = null;
+  try {
+    existingConfig = await readConfig(absPath);
+  } catch {
+    warnings.push(
+      'Existing .schema-memory/config.json is invalid and will be regenerated.'
+    );
+  }
+  const alreadyAdded = existingConfig !== null;
+  const mode: 'new' | 'adopt' = alreadyAdded ? 'adopt' : 'new';
+  const stack = await detectStack(absPath);
 
   // Check git repo
   try {
     await stat(resolve(absPath, '.git'));
   } catch {
     warnings.push('The folder is not a Git repository root.');
+  }
+
+  // Registry state (local machine) for this path / id
+  const projects = await listProjects();
+  const pathKey = normalizePathKey(absPath);
+  const registered = projects.some((p) => normalizePathKey(p.path) === pathKey);
+  const effectiveId = existingConfig?.id ?? defaultId;
+  const conflictEntry = projects.find(
+    (p) => p.id === effectiveId && normalizePathKey(p.path) !== pathKey
+  );
+
+  let existing: ExistingProjectInfo | undefined;
+  let needsBootstrap = true;
+  if (existingConfig) {
+    const summary = await summarizeExisting(absPath, existingConfig);
+    existing = summary.info;
+    needsBootstrap = summary.needsBootstrap;
   }
 
   const actions: ScaffoldAction[] = [];
@@ -134,26 +240,105 @@ export async function planAddProject(repoPath: string): Promise<ScaffoldPlan> {
 
   const agentsPath = resolve(absPath, 'AGENTS.md');
   const existingAgents = await readIfExists(agentsPath);
-  const { diff, created } = updateAgentsMdContent(existingAgents, defaultId);
+  const { diff, content: nextAgents, created } = updateAgentsMdContent(
+    existingAgents,
+    effectiveId
+  );
 
-  actions.push({
-    op: created ? 'create' : 'modify',
-    file: 'AGENTS.md',
-    preview: created
-      ? 'Creates AGENTS.md with schema-memory rules'
-      : 'Injects managed schema-memory rules block',
-    diff,
-  });
+  // In adopt mode only touch AGENTS.md when the managed block is missing/stale.
+  if (!alreadyAdded || nextAgents !== existingAgents) {
+    actions.push({
+      op: created ? 'create' : 'modify',
+      file: 'AGENTS.md',
+      preview: created
+        ? 'Creates AGENTS.md with schema-memory rules'
+        : 'Injects managed schema-memory rules block',
+      diff,
+    });
+  }
 
   return {
     path: absPath,
     defaultId,
     defaultName,
     alreadyAdded,
+    mode,
+    existing,
+    registry: {
+      registered,
+      ...(conflictEntry
+        ? { conflict: { id: conflictEntry.id, path: conflictEntry.path } }
+        : {}),
+    },
+    needsBootstrap,
     stack,
     actions,
     warnings,
   };
+}
+
+/**
+ * Registers an already-configured repo (cloned with its `.schema-memory/`)
+ * in the local registry WITHOUT overwriting any file of the repo except the
+ * managed AGENTS.md block (and `config.id` when registering as `new`).
+ *
+ * If the config `id` is registered locally for a different path, a
+ * {@link ProjectConflictError} is thrown unless `resolveConflict` is given:
+ * - `replace`: the registry entry is repointed to this path.
+ * - `new`: a fresh `<id>-N` is generated and written to the repo `config.json`.
+ */
+export async function adoptProject(
+  plan: ScaffoldPlan,
+  options: { resolveConflict?: ConflictResolution } = {}
+): Promise<ProjectConfig> {
+  const absPath = plan.path;
+  const config = await readConfig(absPath);
+  if (!config) {
+    throw new Error(`No .schema-memory/config.json found in "${absPath}".`);
+  }
+
+  const projects = await listProjects();
+  const pathKey = normalizePathKey(absPath);
+  const conflict = projects.find(
+    (p) => p.id === config.id && normalizePathKey(p.path) !== pathKey
+  );
+
+  let finalConfig = config;
+  if (conflict) {
+    if (!options.resolveConflict) {
+      throw new ProjectConflictError(conflict.id, conflict.path);
+    }
+    if (options.resolveConflict === 'new') {
+      let counter = 2;
+      let newId = `${slugify(config.id)}-${counter}`;
+      while (projects.some((p) => p.id === newId)) {
+        counter += 1;
+        newId = `${slugify(config.id)}-${counter}`;
+      }
+      finalConfig = { ...config, id: newId };
+      await writeConfig(absPath, finalConfig);
+    }
+    // 'replace': keep config.id; registerProject below repoints the entry.
+  }
+
+  // Keep the managed AGENTS.md block in sync with the (possibly new) id.
+  const agentsPath = resolve(absPath, 'AGENTS.md');
+  const existingAgents = await readIfExists(agentsPath);
+  const { content: updatedAgents } = updateAgentsMdContent(
+    existingAgents,
+    finalConfig.id
+  );
+  if (updatedAgents !== existingAgents) {
+    await atomicWrite(agentsPath, updatedAgents);
+  }
+
+  await registerProject({
+    id: finalConfig.id,
+    name: finalConfig.name,
+    path: absPath,
+  });
+
+  return finalConfig;
 }
 
 export async function applyAddProject(
@@ -163,8 +348,14 @@ export async function applyAddProject(
     name?: string;
     dialect?: Dialect;
     installProjectSkill?: boolean;
+    resolveConflict?: ConflictResolution;
   }
 ): Promise<ProjectConfig> {
+  // Never overwrite an existing repo configuration: adopt it instead.
+  if (plan.mode === 'adopt') {
+    return adoptProject(plan, { resolveConflict: options.resolveConflict });
+  }
+
   const absPath = plan.path;
   const name = options.name || plan.defaultName;
 

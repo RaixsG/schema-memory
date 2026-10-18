@@ -2,7 +2,12 @@ import { resolve, dirname } from 'node:path';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { existsSync } from 'node:fs';
-import { readIfExists, listProjects, readConfig } from '@schema-memory/core';
+import {
+  readIfExists,
+  listProjects,
+  readConfig,
+  normalizePathKey,
+} from '@schema-memory/core';
 import { findCommandOnPath, fallbackShimExists } from '../platform.js';
 
 export interface DoctorCheckResult {
@@ -139,10 +144,14 @@ export async function runDoctorChecks(options?: {
   const localConfig = await readConfig(cwd);
   const projects = await listProjects();
   if (localConfig) {
+    const cwdKey = normalizePathKey(cwd);
+    const registered = projects.some((p) => normalizePathKey(p.path) === cwdKey);
     results.push({
       name: 'Current Directory Project',
-      ok: true,
-      detail: `Initialized as "${localConfig.name}" (id: ${localConfig.id}, dialect: ${localConfig.dialect})`,
+      ok: registered,
+      detail: registered
+        ? `Initialized as "${localConfig.name}" (id: ${localConfig.id}, dialect: ${localConfig.dialect})`
+        : `Detected "${localConfig.name}" (id: ${localConfig.id}) but not registered on this machine — run "sm add" to register it`,
     });
   } else {
     results.push({

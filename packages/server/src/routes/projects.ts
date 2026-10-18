@@ -11,6 +11,7 @@ import {
   parseSchema,
   planAddProject,
   applyAddProject,
+  ProjectConflictError,
   removeProject,
   savePending,
   getPending,
@@ -76,7 +77,7 @@ export const projectsRouter = new Hono()
     }
   })
 
-  // 3. Apply add project
+  // 3. Apply add project (or adopt an already-configured repo)
   .post('/', validate('json', addProjectSchema), async (c) => {
     try {
       const body = c.req.valid('json' as never) as {
@@ -85,6 +86,7 @@ export const projectsRouter = new Hono()
         name?: string;
         dialect?: Dialect;
         installProjectSkill?: boolean;
+        resolveConflict?: 'replace' | 'new';
       };
       const plan = await planAddProject(body.path);
       const config = await applyAddProject(plan, {
@@ -92,9 +94,25 @@ export const projectsRouter = new Hono()
         name: body.name,
         dialect: body.dialect,
         installProjectSkill: body.installProjectSkill,
+        resolveConflict: body.resolveConflict,
       });
-      return c.json({ project: config });
+      return c.json({
+        project: config,
+        adopted: plan.mode === 'adopt',
+        needsBootstrap: plan.needsBootstrap,
+      });
     } catch (err: any) {
+      if (err instanceof ProjectConflictError) {
+        return c.json(
+          {
+            error: err.message,
+            code: 'PROJECT_CONFLICT',
+            id: err.id,
+            existingPath: err.existingPath,
+          },
+          409
+        );
+      }
       return c.json({ error: err.message }, 400);
     }
   })

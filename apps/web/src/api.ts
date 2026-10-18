@@ -8,6 +8,17 @@ import {
 
 const BASE_URL = '';
 
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    public status: number,
+    public body: any
+  ) {
+    super(message);
+    this.name = 'ApiError';
+  }
+}
+
 async function req<T>(path: string, options: RequestInit = {}): Promise<T> {
   const res = await fetch(`${BASE_URL}${path}`, {
     ...options,
@@ -19,7 +30,11 @@ async function req<T>(path: string, options: RequestInit = {}): Promise<T> {
 
   const json = await res.json();
   if (!res.ok) {
-    throw new Error(json.error || `HTTP error ${res.status}`);
+    throw new ApiError(
+      json.error || `HTTP error ${res.status}`,
+      res.status,
+      json
+    );
   }
   return json;
 }
@@ -38,11 +53,15 @@ export const api = {
     name?: string;
     dialect?: string;
     installProjectSkill?: boolean;
+    resolveConflict?: 'replace' | 'new';
   }) =>
-    req<{ project: any }>('/api/projects', {
-      method: 'POST',
-      body: JSON.stringify(data),
-    }),
+    req<{ project: any; adopted: boolean; needsBootstrap: boolean }>(
+      '/api/projects',
+      {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }
+    ),
 
   removeProject: (id: string, deleteData = false) =>
     req<{ removed: boolean }>(`/api/projects/${id}?deleteData=${deleteData}`, {

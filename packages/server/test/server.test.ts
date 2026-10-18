@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createApp } from '../src/app.js';
@@ -194,6 +194,87 @@ describe('M5: Server REST API and Security', () => {
       expect(promptRes.status).toBe(200);
       const promptData = await promptRes.json();
       expect(promptData.prompt).toContain('import_schema');
+    });
+  });
+
+  describe('Adopting already-configured repos', () => {
+    const localHeaders = {
+      host: '127.0.0.1:4317',
+      'content-type': 'application/json',
+    };
+
+    async function seedConfiguredRepo(dir: string, id: string) {
+      const sm = join(dir, '.schema-memory');
+      await mkdir(join(sm, 'adr'), { recursive: true });
+      await writeFile(
+        join(sm, 'config.json'),
+        JSON.stringify({
+          version: 1,
+          id,
+          name: 'Cloned App',
+          dialect: 'mysql',
+          stack: [],
+          createdAgentsMd: false,
+          createdAt: '2025-02-02T00:00:00.000Z',
+        }) + '\n'
+      );
+      await writeFile(join(sm, 'schema.dbml'), 'Table t {\n  id int [pk]\n}\n');
+    }
+
+    it('plans as adopt, registers without overwriting, and reports 409 on id conflicts', async () => {
+      const otherRepo = await mkdtemp(join(tmpdir(), 'sm-srv-other-'));
+      try {
+        await seedConfiguredRepo(tempRepo, 'cloned-app');
+        await seedConfiguredRepo(otherRepo, 'cloned-app');
+
+        const planRes = await app.request('/api/projects/plan', {
+          method: 'POST',
+          headers: localHeaders,
+          body: JSON.stringify({ path: tempRepo }),
+        });
+        const { plan } = await planRes.json();
+        expect(plan.mode).toBe('adopt');
+        expect(plan.existing.name).toBe('Cloned App');
+        expect(plan.needsBootstrap).toBe(false);
+
+        const addRes = await app.request('/api/projects', {
+          method: 'POST',
+          headers: localHeaders,
+          body: JSON.stringify({ path: tempRepo, name: 'Ignored', dialect: 'postgres' }),
+        });
+        expect(addRes.status).toBe(200);
+        const added = await addRes.json();
+        expect(added.adopted).toBe(true);
+        expect(added.needsBootstrap).toBe(false);
+        expect(added.project.name).toBe('Cloned App');
+        expect(added.project.dialect).toBe('mysql');
+
+        // Second clone with the same id at a different path -> 409
+        const conflictRes = await app.request('/api/projects', {
+          method: 'POST',
+          headers: localHeaders,
+          body: JSON.stringify({ path: otherRepo }),
+        });
+        expect(conflictRes.status).toBe(409);
+        const conflict = await conflictRes.json();
+        expect(conflict.code).toBe('PROJECT_CONFLICT');
+        expect(conflict.id).toBe('cloned-app');
+        expect(conflict.existingPath).toBe(tempRepo);
+
+        // Resolve as new
+        const newRes = await app.request('/api/projects', {
+          method: 'POST',
+          headers: localHeaders,
+          body: JSON.stringify({ path: otherRepo, resolveConflict: 'new' }),
+        });
+        expect(newRes.status).toBe(200);
+        expect((await newRes.json()).project.id).toBe('cloned-app-2');
+
+        const listRes = await app.request('/api/projects', { headers: localHeaders });
+        expect((await listRes.json()).projects).toHaveLength(2);
+      } finally {
+        await rm(otherRepo, { recursive: true, force: true });
+      }
     });
   });
 

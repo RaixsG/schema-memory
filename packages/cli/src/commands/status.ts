@@ -6,6 +6,7 @@ import {
   getPendingStatus,
   countAdrsStatus,
 } from '@schema-memory/core';
+import { detectProjectFromCwd } from '../detect.js';
 
 export async function statusCommand(options: { project?: string }): Promise<void> {
   if (options.project) {
@@ -26,8 +27,15 @@ export async function statusCommand(options: { project?: string }): Promise<void
   }
 
   const projects = await listProjects();
+  const detected = await detectProjectFromCwd();
+  const unregisteredHint =
+    detected && !detected.registered
+      ? `\n⚠️  Project "${detected.config.name}" detected in ${detected.path} but not registered. Run "sm add" to register it.\n`
+      : '';
+
   if (projects.length === 0) {
     console.log('\nNo projects registered. Run "schema-memory add <path>" to add one.\n');
+    if (unregisteredHint) console.log(unregisteredHint);
     return;
   }
 
@@ -51,5 +59,5 @@ export async function statusCommand(options: { project?: string }): Promise<void
     console.log(` • ${p.id.padEnd(20)} ${p.name.padEnd(25)} ${pendingBadge}`);
     console.log(`   Path: ${p.path} (ADRs: ${totalAdrs})`);
   }
-  console.log();
+  console.log(unregisteredHint || '');
 }
