@@ -45,7 +45,9 @@ jobs:
         run: pnpm build:binaries
 
       - name: Pack CLI package
-        run: pnpm pack:cli
+        run: |
+          rm -f packages/cli/*.tgz
+          pnpm pack:cli
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
