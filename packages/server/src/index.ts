@@ -17,7 +17,8 @@ export function startServer(options: { port?: number; host?: string } = {}): Pro
   const host = options.host || '127.0.0.1';
   const app = createApp();
 
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
+    let resolved = false;
     const server = serve(
       {
         fetch: app.fetch,
@@ -25,6 +26,7 @@ export function startServer(options: { port?: number; host?: string } = {}): Pro
         hostname: host,
       },
       (info) => {
+        resolved = true;
         const url = `http://${host}:${info.port}`;
 
         const close = () =>
@@ -37,7 +39,43 @@ export function startServer(options: { port?: number; host?: string } = {}): Pro
         resolve({ server, port: info.port, url, close });
       }
     );
+
+    if (server && typeof server.on === 'function') {
+      server.on('error', (err: any) => {
+        if (!resolved) {
+          reject(err);
+        }
+      });
+    }
   });
+}
+
+export async function startServerWithFallback(options: {
+  port?: number;
+  host?: string;
+  maxRetries?: number;
+} = {}): Promise<{
+  server: any;
+  port: number;
+  url: string;
+  close: () => Promise<void>;
+}> {
+  const initialPort = options.port || 4317;
+  const maxRetries = options.maxRetries ?? 10;
+  let currentPort = initialPort;
+
+  for (let i = 0; i <= maxRetries; i++) {
+    try {
+      return await startServer({ ...options, port: currentPort });
+    } catch (err: any) {
+      if (err.code === 'EADDRINUSE' && i < maxRetries) {
+        currentPort++;
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw new Error(`Could not find an open port between ${initialPort} and ${currentPort}`);
 }
 
 // Direct execution

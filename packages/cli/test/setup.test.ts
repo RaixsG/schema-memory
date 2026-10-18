@@ -6,12 +6,19 @@ import {
   mergeOpenCodeConfig,
   mergeAntigravityMcpConfig,
   mergeGlobalAgentsMd,
+  resolveGlobalInstallCommand,
+  runGlobalInstall,
 } from '../src/commands/setup.js';
 import { runDoctorChecks } from '../src/commands/doctor.js';
 import {
   isEphemeralInstall,
   isWithinDir,
 } from '../src/platform.js';
+import {
+  shouldOfferPrompt,
+  readSetupState,
+  writeSetupState,
+} from '../src/setup-state.js';
 
 const isWindows = process.platform === 'win32';
 
@@ -222,5 +229,122 @@ describe('Universal Setup Helpers (OpenCode, Antigravity & Doctor)', () => {
   it('isWithinDir respects path boundaries', () => {
     expect(isWithinDir('/usr/local/bin/sm', '/usr/local/bin')).toBe(true);
     expect(isWithinDir('/usr/local/bin-other/sm', '/usr/local/bin')).toBe(false);
+  });
+
+  it('manages setup prompt cooldown and completion state', () => {
+    const now = 1700000000000;
+    const oneHour = 60 * 60 * 1000;
+    const twoDays = 48 * 60 * 60 * 1000;
+
+    // Never offered -> should offer
+    expect(shouldOfferPrompt({}, now)).toBe(true);
+
+    // Declined 1 hour ago -> should NOT offer (cooldown 24h)
+    expect(
+      shouldOfferPrompt(
+        { lastOfferedAt: new Date(now - oneHour).toISOString() },
+        now
+      )
+    ).toBe(false);
+
+    // Declined 2 days ago -> should offer
+    expect(
+      shouldOfferPrompt(
+        { lastOfferedAt: new Date(now - twoDays).toISOString() },
+        now
+      )
+    ).toBe(true);
+
+    // Completed setup -> never offer again
+    expect(
+      shouldOfferPrompt(
+        {
+          completedAt: new Date(now - twoDays).toISOString(),
+          lastOfferedAt: new Date(now - twoDays).toISOString(),
+        },
+        now
+      )
+    ).toBe(false);
+
+    // Interrupted setup -> should offer
+    expect(
+      shouldOfferPrompt(
+        {
+          interrupted: true,
+          completedAt: new Date(now - twoDays).toISOString(),
+        },
+        now
+      )
+    ).toBe(true);
+  });
+
+  it('resolves correct global package manager install command per ephemeral runner', () => {
+    expect(resolveGlobalInstallCommand('bunx')).toEqual({
+      command: 'bun',
+      args: ['add', '-g', 'schema-memory'],
+    });
+    expect(resolveGlobalInstallCommand('pnpm-dlx')).toEqual({
+      command: 'pnpm',
+      args: ['add', '-g', 'schema-memory'],
+    });
+    expect(resolveGlobalInstallCommand('npx')).toEqual({
+      command: 'npm',
+      args: ['i', '-g', 'schema-memory'],
+    });
+    expect(resolveGlobalInstallCommand(null)).toEqual({
+      command: 'npm',
+      args: ['i', '-g', 'schema-memory'],
+    });
+  });
+
+  it('executes global install using spawn runner and handles exit codes', () => {
+    const successSpawn = ((cmd: string, args: string[]) => {
+      return { status: 0, error: undefined } as any;
+    }) as any;
+
+    const failSpawn = ((cmd: string, args: string[]) => {
+      return { status: 1, error: undefined } as any;
+    }) as any;
+
+    const errorSpawn = ((cmd: string, args: string[]) => {
+      return { status: null, error: new Error('Command failed: EACCES') } as any;
+    }) as any;
+
+    expect(runGlobalInstall('npm', ['i', '-g'], successSpawn)).toEqual({
+      success: true,
+      detail: undefined,
+    });
+    expect(runGlobalInstall('npm', ['i', '-g'], failSpawn)).toEqual({
+      success: false,
+      detail: 'Exited with code 1',
+    });
+    expect(runGlobalInstall('npm', ['i', '-g'], errorSpawn)).toEqual({
+      success: false,
+      detail: 'Command failed: EACCES',
+    });
+  });
+
+  it('reports interrupted setup state in doctor checks', async () => {
+    const fakeHome = await mkdtemp(join(tmpdir(), 'sm-doc-interrupted-'));
+    try {
+      const smDir = resolve(fakeHome, '.schema-memory');
+      await mkdir(smDir, { recursive: true });
+      await writeSetupState({ interrupted: true }, smDir);
+
+      const state = await readSetupState(smDir);
+      expect(state.interrupted).toBe(true);
+
+      const results = await runDoctorChecks({
+        homeDir: fakeHome,
+        cwd: fakeHome,
+      });
+
+      const setupCheck = results.find((r) => r.name === 'Setup Status');
+      expect(setupCheck).toBeDefined();
+      expect(setupCheck?.ok).toBe(false);
+      expect(setupCheck?.detail).toContain('cancelled or interrupted');
+    } finally {
+      await rm(fakeHome, { recursive: true, force: true });
+    }
   });
 });

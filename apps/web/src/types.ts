@@ -101,4 +101,12 @@ export interface DirectoryEntry {
   path: string;
   isGitRepo: boolean;
   hasSchemaMemory: boolean;
+  isRegistered?: boolean;
+}
+
+export interface LocationEntry {
+  id: string;
+  label: string;
+  path: string;
+  kind: 'home' | 'desktop' | 'documents' | 'drive' | 'volume' | 'mount' | 'recent';
 }

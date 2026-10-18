@@ -7,8 +7,16 @@ import {
   countAdrsStatus,
 } from '@schema-memory/core';
 import { detectProjectFromCwd } from '../detect.js';
+import { findActiveDaemon } from '../daemon.js';
 
 export async function statusCommand(options: { project?: string }): Promise<void> {
+  const daemon = await findActiveDaemon();
+  if (daemon) {
+    console.log(`\n🌐 UI Server: active at ${daemon.url} (PID: ${daemon.pid || 'external'})`);
+  } else {
+    console.log('\n🌐 UI Server: stopped (run "sm" or "sm start" to launch)');
+  }
+
   if (options.project) {
     const resolved = await resolveProject({ project: options.project });
     const [config, pending, adrCounts] = await Promise.all([

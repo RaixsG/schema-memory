@@ -3,6 +3,8 @@ import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { existsSync } from 'node:fs';
 import { chmod, rm, symlink } from 'node:fs/promises';
+import { spawnSync } from 'node:child_process';
+import { createInterface } from 'node:readline';
 import cmdShim from 'cmd-shim';
 import {
   atomicWrite,
@@ -18,9 +20,49 @@ import {
   isDirOnPath,
   detectEphemeralRunner,
   isWithinDir,
+  type EphemeralRunner,
 } from '../platform.js';
+import {
+  readSetupState,
+  writeSetupState,
+} from '../setup-state.js';
 
 export type SetupTarget = 'all' | 'opencode' | 'antigravity' | 'agents';
+
+export function resolveGlobalInstallCommand(
+  runner: EphemeralRunner | null
+): { command: string; args: string[] } {
+  if (runner === 'bunx') {
+    return { command: 'bun', args: ['add', '-g', 'schema-memory'] };
+  }
+  if (runner === 'pnpm-dlx') {
+    return { command: 'pnpm', args: ['add', '-g', 'schema-memory'] };
+  }
+  return { command: 'npm', args: ['i', '-g', 'schema-memory'] };
+}
+
+export function runGlobalInstall(
+  command: string,
+  args: string[],
+  spawnFn: typeof spawnSync = spawnSync
+): { success: boolean; detail?: string } {
+  try {
+    const res = spawnFn(command, args, {
+      stdio: 'inherit',
+      shell: isWindows,
+    });
+    if (res.error) {
+      return { success: false, detail: res.error.message };
+    }
+    const success = res.status === 0;
+    return {
+      success,
+      detail: success ? undefined : `Exited with code ${res.status}`,
+    };
+  } catch (err: any) {
+    return { success: false, detail: err.message };
+  }
+}
 
 const START_MARKER = '<!-- schema-memory:start -->';
 const END_MARKER = '<!-- schema-memory:end -->';
@@ -224,11 +266,14 @@ function printPathHint(binDir: string): void {
   }
 }
 
-export async function setupCommand(options: {
+export interface SetupCommandOptions {
   print?: boolean;
   cliOnly?: boolean;
   target?: string;
-}): Promise<void> {
+  installGlobal?: boolean;
+}
+
+export async function setupCommand(options: SetupCommandOptions): Promise<void> {
   const currentFile = fileURLToPath(import.meta.url);
   const cliDistPath = resolve(dirname(currentFile), '..', 'dist', 'index.js');
 
@@ -412,24 +457,98 @@ When working on a repository that contains \`.schema-memory/\` or references \`s
     installedTargets.push(`Antigravity Plugin Bundle: ${agyPluginDir}`);
   }
 
-  // 4. Global CLI binary (skipped automatically when already on PATH or running via npx/bunx)
-  if (ephemeralRunner) {
-    installedTargets.push(
-      `Global CLI: running via ${ephemeralRunner} (optional global install: "npm i -g schema-memory" or "bun add -g schema-memory")`
-    );
+  // 4. Global CLI binary
+  const smOnPath = findCommandOnPath('sm') ?? findCommandOnPath('schema-memory');
+  if (smOnPath) {
+    installedTargets.push(`Global CLI: already available on PATH (${smOnPath})`);
+  } else if (options.installGlobal === false) {
+    if (!ephemeralRunner) {
+      try {
+        const link = await linkCliBinary(cliDistPath);
+        installedTargets.push(`Global CLI: ${link.detail}`);
+        if (link.linked && !isDirOnPath(link.binDir)) {
+          warnings.push(
+            `Add "${link.binDir}" to PATH (or run "npm i -g schema-memory" / "bun add -g schema-memory").`
+          );
+        }
+      } catch (error: any) {
+        warnings.push(`Could not link CLI (${error.message}).`);
+      }
+    } else {
+      warnings.push(
+        `Global CLI install skipped. Run via "${ephemeralRunner} schema-memory" or install manually.`
+      );
+    }
   } else {
-    try {
-      const link = await linkCliBinary(cliDistPath);
-      installedTargets.push(`Global CLI: ${link.detail}`);
-      if (link.linked && !isDirOnPath(link.binDir)) {
+    const installCmd = resolveGlobalInstallCommand(ephemeralRunner);
+    let shouldRun = options.installGlobal === true;
+
+    if (options.installGlobal === undefined) {
+      if (process.stdin.isTTY && process.stdout.isTTY) {
+        console.log(
+          `\n📦 The "sm" command is not yet available globally on your PATH.`
+        );
+        const rl = createInterface({ input: process.stdin, output: process.stdout });
+        const answer = await new Promise<string>((resolveAnswer) => {
+          rl.question(
+            `   Install "sm" globally via "${installCmd.command} ${installCmd.args.join(' ')}"? (Y/n) `,
+            (val) => {
+              rl.close();
+              resolveAnswer(val);
+            }
+          );
+        });
+        const normalized = answer.trim().toLowerCase();
+        shouldRun = normalized === '' || normalized === 'y' || normalized === 'yes';
+        if (!shouldRun) {
+          await writeSetupState({
+            globalInstallDeclined: true,
+            lastOfferedAt: new Date().toISOString(),
+          });
+        }
+      } else {
         warnings.push(
-          `Add "${link.binDir}" to PATH (or run "npm i -g schema-memory" / "bun add -g schema-memory").`
+          `"sm" is not on PATH. Run "${installCmd.command} ${installCmd.args.join(' ')}" to install it globally.`
         );
       }
-    } catch (error: any) {
-      warnings.push(
-        `Could not link the global CLI (${error.message}). Use "npm i -g schema-memory" or "bun add -g schema-memory" instead.`
-      );
+    }
+
+    if (shouldRun) {
+      console.log(`\n⚙️  Running: ${installCmd.command} ${installCmd.args.join(' ')}...`);
+      const res = runGlobalInstall(installCmd.command, installCmd.args);
+      if (res.success) {
+        installedTargets.push(
+          `Global CLI: installed via "${installCmd.command} ${installCmd.args.join(' ')}"`
+        );
+        await writeSetupState({
+          lastInstalledMethod: `${installCmd.command} ${installCmd.args.join(' ')}`,
+        });
+      } else {
+        warnings.push(
+          `Global install via ${installCmd.command} failed (${res.detail || 'unknown error'}). Falling back to local bin link.`
+        );
+        try {
+          const link = await linkCliBinary(cliDistPath);
+          installedTargets.push(`Global CLI: ${link.detail}`);
+          if (link.linked && !isDirOnPath(link.binDir)) {
+            printPathHint(link.binDir);
+          }
+        } catch (linkError: any) {
+          warnings.push(`Could not link CLI binary: ${linkError.message}`);
+        }
+      }
+    } else if (!ephemeralRunner) {
+      try {
+        const link = await linkCliBinary(cliDistPath);
+        installedTargets.push(`Global CLI: ${link.detail}`);
+        if (link.linked && !isDirOnPath(link.binDir)) {
+          warnings.push(
+            `Add "${link.binDir}" to PATH (or run "npm i -g schema-memory").`
+          );
+        }
+      } catch (linkErr: any) {
+        warnings.push(`Could not link CLI binary: ${linkErr.message}`);
+      }
     }
   }
 
@@ -450,6 +569,11 @@ When working on a repository that contains \`.schema-memory/\` or references \`s
       `Refreshed AGENTS.md guardrails in ${refreshedCount} registered project(s)`
     );
   }
+
+  await writeSetupState({
+    completedAt: new Date().toISOString(),
+    interrupted: false,
+  });
 
   console.log('\n✅ Global setup complete:');
   for (const item of installedTargets) {

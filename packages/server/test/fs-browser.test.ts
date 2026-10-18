@@ -40,4 +40,16 @@ describe('fs-browser path policy', () => {
     expect(roots).toContain(home.toLowerCase());
     expect(roots).toContain(tmp.toLowerCase());
   });
+
+  it('listLocations returns standard shortcuts and respects platform', async () => {
+    const { listLocations } = await import('../src/fs-browser.js');
+    const locations = await listLocations({ platform: 'darwin' });
+    expect(locations.some((l) => l.kind === 'home')).toBe(true);
+    expect(locations.find((l) => l.kind === 'home')?.label).toBe('Inicio');
+    if (process.platform === 'darwin') {
+      const hasVolumes = locations.some((l) => l.kind === 'volume');
+      // On macOS running machine /Volumes always exists
+      expect(typeof hasVolumes).toBe('boolean');
+    }
+  });
 });

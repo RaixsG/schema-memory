@@ -8,7 +8,9 @@ export const addProjectSchema = z.object({
   path: z.string({ required_error: 'Field "path" is required.' }).min(1, 'Field "path" is required.'),
   id: z.string().optional(),
   name: z.string().optional(),
-  dialect: z.enum(['postgres', 'sqlite', 'mysql']).optional(),
+  dialect: z
+    .enum(['postgres', 'mysql', 'sqlite', 'mssql', 'oracle', 'other'])
+    .optional(),
   installProjectSkill: z.boolean().optional(),
   resolveConflict: z.enum(['replace', 'new']).optional(),
 });

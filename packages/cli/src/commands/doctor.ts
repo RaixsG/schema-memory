@@ -7,8 +7,10 @@ import {
   listProjects,
   readConfig,
   normalizePathKey,
+  getRegistryDir,
 } from '@schema-memory/core';
-import { findCommandOnPath, fallbackShimExists } from '../platform.js';
+import { findCommandOnPath, fallbackShimExists, isWindows } from '../platform.js';
+import { readSetupState } from '../setup-state.js';
 
 export interface DoctorCheckResult {
   name: string;
@@ -43,17 +45,36 @@ export async function runDoctorChecks(options?: {
   const smOnPath = findCommandOnPath('sm') ?? findCommandOnPath('schema-memory');
   const fallbackShim = fallbackShimExists(resolve(home, '.local', 'bin'));
   const smBinExists = smOnPath !== null || fallbackShim !== null;
+  let smDetail: string;
+  if (smOnPath) {
+    smDetail = `Resolved on PATH: ${smOnPath}`;
+  } else if (fallbackShim) {
+    smDetail = isWindows
+      ? `Found fallback shim at "${fallbackShim}", but directory is not on PATH. Fix: run "npm i -g schema-memory" or add "%USERPROFILE%\\.local\\bin" to PATH.`
+      : `Found fallback shim at "${fallbackShim}", but directory is not on PATH. Fix: run "npm i -g schema-memory" or add "export PATH=\\"$HOME/.local/bin:$PATH\\"" to ~/.zshrc or ~/.bashrc.`;
+  } else {
+    smDetail = isWindows
+      ? `Not on PATH. Fix: run "npm i -g schema-memory" or add "%USERPROFILE%\\.local\\bin" to PATH.`
+      : `Not on PATH. Fix: run "npm i -g schema-memory" or add "export PATH=\\"$HOME/.local/bin:$PATH\\"" to ~/.zshrc or ~/.bashrc.`;
+  }
   results.push({
     name: 'Global CLI (sm)',
     ok: smBinExists,
-    detail: smOnPath
-      ? `Resolved on PATH: ${smOnPath}`
-      : fallbackShim
-        ? fallbackShim
-        : 'Not linked globally (using npx/bunx, or run "npm i -g schema-memory" / "bun add -g schema-memory")',
+    detail: smDetail,
   });
 
-  // 3. OpenCode MCP (~/.config/opencode/opencode.json) — native V2 shape, V1 fallback
+  // 3. Setup completion status
+  const setupState = await readSetupState(resolve(home, '.schema-memory'));
+  if (setupState.interrupted) {
+    results.push({
+      name: 'Setup Status',
+      ok: false,
+      detail:
+        'Previous setup was cancelled or interrupted. Run "sm setup" (or "npx schema-memory setup") to finish configuration.',
+    });
+  }
+
+  // 4. OpenCode MCP (~/.config/opencode/opencode.json) — native V2 shape, V1 fallback
   const openCodeJsonPath = resolve(home, '.config', 'opencode', 'opencode.json');
   const openCodeRaw = await readIfExists(openCodeJsonPath);
   let openCodeOk = false;

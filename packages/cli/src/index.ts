@@ -37,10 +37,36 @@ function hasGlobalSetup(home = homedir()): boolean {
   return false;
 }
 
+import {
+  readSetupState,
+  writeSetupState,
+  shouldOfferPrompt,
+} from './setup-state.js';
+
+let isSetupActive = false;
+process.on('SIGINT', async () => {
+  if (isSetupActive) {
+    try {
+      await writeSetupState({
+        interrupted: true,
+        lastOfferedAt: new Date().toISOString(),
+      });
+    } catch {}
+    console.log(
+      '\n\nSetup cancelado. Puedes volver a ejecutarlo en cualquier momento con "sm setup" (o "npx schema-memory setup").\n'
+    );
+    process.exit(130);
+  }
+  process.exit(0);
+});
+
 async function offerFirstRunSetup(): Promise<void> {
   if (!process.stdin.isTTY || !process.stdout.isTTY) return;
   if (process.env.SCHEMA_MEMORY_SKIP_SETUP_PROMPT === '1') return;
   if (hasGlobalSetup()) return;
+
+  const state = await readSetupState();
+  if (!shouldOfferPrompt(state)) return;
 
   console.log(
     '\n👋 schema-memory is not configured globally yet (agent MCP, skills and rules).'
@@ -55,9 +81,18 @@ async function offerFirstRunSetup(): Promise<void> {
 
   const normalized = answer.trim().toLowerCase();
   if (normalized === '' || normalized === 'y' || normalized === 'yes') {
-    const { setupCommand } = await import('./commands/setup.js');
-    await setupCommand({ target: 'all' });
+    isSetupActive = true;
+    try {
+      const { setupCommand } = await import('./commands/setup.js');
+      await setupCommand({ target: 'all' });
+    } finally {
+      isSetupActive = false;
+    }
   } else {
+    await writeSetupState({
+      lastOfferedAt: new Date().toISOString(),
+      globalInstallDeclined: true,
+    });
     console.log(
       '   Skipped. Run "sm setup" (or "npx schema-memory setup" / "bunx schema-memory setup") anytime to configure your agents.\n'
     );
@@ -116,8 +151,10 @@ async function offerRegisterCwdProject(): Promise<string | undefined> {
 
 program
   .command('ui', { isDefault: true })
+  .alias('start')
   .description('Start the local web UI and API server (default command)')
   .option('-p, --port <port>', 'Server port (default: 4317)')
+  .option('--foreground', 'Run server in foreground without daemonizing')
   .option('--open', 'Open web browser automatically (default: true)')
   .option('--no-open', 'Do not open web browser automatically')
   .action(async (opts) => {
@@ -128,6 +165,39 @@ program
       await uiCommand({ ...opts, projectId });
     } catch (err: any) {
       console.error('Error starting UI:', err.message);
+      process.exit(1);
+    }
+  });
+
+program
+  .command('stop')
+  .description('Stop the background schema-memory UI server')
+  .action(async () => {
+    try {
+      const { stopDaemon } = await import('./daemon.js');
+      const res = await stopDaemon();
+      console.log(res.detail);
+    } catch (err: any) {
+      console.error('Error stopping UI:', err.message);
+      process.exit(1);
+    }
+  });
+
+program
+  .command('restart')
+  .description('Restart the background schema-memory UI server')
+  .option('-p, --port <port>', 'Server port (default: 4317)')
+  .option('--open', 'Open web browser automatically (default: true)')
+  .option('--no-open', 'Do not open web browser automatically')
+  .action(async (opts) => {
+    try {
+      const { restartDaemon } = await import('./daemon.js');
+      const port = opts.port ? parseInt(opts.port, 10) : 4317;
+      console.log('\n🔄 Restarting schema-memory UI daemon...');
+      const state = await restartDaemon({ port, open: opts.open });
+      console.log(`✅ schema-memory UI running at: ${state.url} (PID ${state.pid})\n`);
+    } catch (err: any) {
+      console.error('Error restarting UI:', err.message);
       process.exit(1);
     }
   });
@@ -202,6 +272,8 @@ program
   .option('-t, --target <target>', 'Target environment: all | opencode | antigravity | agents (default: all)', 'all')
   .option('--print', 'Print configuration without installing')
   .option('--cli-only', 'Only link the global "sm" and "schema-memory" CLI commands in ~/.local/bin')
+  .option('--install-global', 'Install "sm" globally via package manager (npm / bun / pnpm)')
+  .option('--no-install-global', 'Skip installing "sm" globally via package manager')
   .action(async (opts) => {
     try {
       const { setupCommand } = await import('./commands/setup.js');

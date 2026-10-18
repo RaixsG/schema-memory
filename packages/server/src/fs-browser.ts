@@ -2,12 +2,21 @@ import { readdir, stat } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { resolve, normalize, parse, win32 as pathWin32, posix as pathPosix } from 'node:path';
 import { homedir, tmpdir } from 'node:os';
+import { listProjects, normalizePathKey } from '@schema-memory/core';
 
 export interface DirectoryEntry {
   name: string;
   path: string;
   isGitRepo: boolean;
   hasSchemaMemory: boolean;
+  isRegistered?: boolean;
+}
+
+export interface LocationEntry {
+  id: string;
+  label: string;
+  path: string;
+  kind: 'home' | 'desktop' | 'documents' | 'drive' | 'volume' | 'mount' | 'recent';
 }
 
 export interface PathPolicyOptions {
@@ -31,6 +40,7 @@ function normalizeForCompare(targetPath: string, platform: NodeJS.Platform): str
  * - Windows: the user home, temp dir and every existing drive root (C:\, D:\, ...).
  * - macOS: the user home, /Volumes, /tmp and /private/tmp.
  * - Linux/other: the user home, /tmp, /mnt and /media.
+ * Recalculated dynamically on every request without caching.
  */
 export function computeAllowedRoots(options: PathPolicyOptions = {}): string[] {
   const platform = options.platform ?? process.platform;
@@ -79,8 +89,6 @@ export function isPathWithin(
   return target.startsWith(base);
 }
 
-let cachedDefaultRoots: string[] | null = null;
-
 async function pathExists(p: string): Promise<boolean> {
   try {
     await stat(p);
@@ -95,24 +103,7 @@ export function isPathAllowed(
   options: PathPolicyOptions = {}
 ): boolean {
   const platform = options.platform ?? process.platform;
-  const isDefault =
-    options.platform === undefined &&
-    options.home === undefined &&
-    options.tmp === undefined;
-
-  let roots: string[];
-  if (isDefault) {
-    if (!cachedDefaultRoots) {
-      cachedDefaultRoots = computeAllowedRoots();
-    }
-    roots = cachedDefaultRoots;
-  } else {
-    roots = computeAllowedRoots({
-      platform,
-      ...(options.home ? { home: options.home } : {}),
-      ...(options.tmp ? { tmp: options.tmp } : {}),
-    });
-  }
+  const roots = computeAllowedRoots(options);
   return roots.some((root) => isPathWithin(targetPath, root, platform));
 }
 
@@ -123,6 +114,125 @@ function listWindowsDrives(): string[] {
     if (existsSync(drive)) drives.push(drive);
   }
   return drives;
+}
+
+/**
+ * Returns available system navigation shortcuts (Home, Desktop, Documents,
+ * drives, volumes, and recently registered projects).
+ */
+export async function listLocations(
+  options: PathPolicyOptions = {}
+): Promise<LocationEntry[]> {
+  const platform = options.platform ?? process.platform;
+  const home = options.home ?? homedir();
+  const locations: LocationEntry[] = [];
+
+  // 1. Home
+  locations.push({
+    id: 'home',
+    label: 'Inicio',
+    path: resolve(home),
+    kind: 'home',
+  });
+
+  // 2. Desktop
+  const desktop = resolve(home, 'Desktop');
+  if (existsSync(desktop)) {
+    locations.push({
+      id: 'desktop',
+      label: 'Escritorio',
+      path: desktop,
+      kind: 'desktop',
+    });
+  }
+
+  // 3. Documents
+  const documents = resolve(home, 'Documents');
+  if (existsSync(documents)) {
+    locations.push({
+      id: 'documents',
+      label: 'Documentos',
+      path: documents,
+      kind: 'documents',
+    });
+  }
+
+  // 4. Drives / Volumes / Mounts
+  if (platform === 'win32') {
+    for (let code = 65; code <= 90; code += 1) {
+      const driveLetter = String.fromCharCode(code);
+      const drive = `${driveLetter}:\\`;
+      if (existsSync(drive)) {
+        locations.push({
+          id: `drive-${driveLetter.toLowerCase()}`,
+          label: `Disco (${driveLetter}:)`,
+          path: drive,
+          kind: 'drive',
+        });
+      }
+    }
+  } else if (platform === 'darwin') {
+    const volumesDir = '/Volumes';
+    if (existsSync(volumesDir)) {
+      try {
+        const entries = await readdir(volumesDir, { withFileTypes: true });
+        for (const entry of entries) {
+          if (entry.isDirectory() || entry.isSymbolicLink()) {
+            const volPath = resolve(volumesDir, entry.name);
+            locations.push({
+              id: `volume-${entry.name}`,
+              label: entry.name,
+              path: volPath,
+              kind: 'volume',
+            });
+          }
+        }
+      } catch {
+        // ignore errors
+      }
+    }
+  } else {
+    for (const mountRoot of ['/mnt', '/media']) {
+      if (existsSync(mountRoot)) {
+        try {
+          const entries = await readdir(mountRoot, { withFileTypes: true });
+          for (const entry of entries) {
+            if (entry.isDirectory() || entry.isSymbolicLink()) {
+              const mPath = resolve(mountRoot, entry.name);
+              locations.push({
+                id: `mount-${entry.name}`,
+                label: `${mountRoot}/${entry.name}`,
+                path: mPath,
+                kind: 'mount',
+              });
+            }
+          }
+        } catch {
+          // ignore errors
+        }
+      }
+    }
+  }
+
+  // 5. Recent registered projects
+  try {
+    const projects = await listProjects();
+    const recentProjects = projects.slice(-4).reverse();
+    for (const proj of recentProjects) {
+      if (existsSync(proj.path)) {
+        locations.push({
+          id: `recent-${proj.id}`,
+          label: proj.name,
+          path: proj.path,
+          kind: 'recent',
+        });
+      }
+    }
+  } catch {
+    // ignore errors
+  }
+
+  return locations;
 }
 
 export async function listDirectories(
@@ -139,7 +249,15 @@ export async function listDirectories(
     throw new Error(`Path "${current}" is not a directory.`);
   }
 
-  const entries = await readdir(current, { withFileTypes: true });
+  const [entries, projects] = await Promise.all([
+    readdir(current, { withFileTypes: true }),
+    listProjects().catch(() => []),
+  ]);
+
+  const registeredPaths = new Set(
+    projects.map((p) => normalizePathKey(p.path))
+  );
+
   const candidateEntries = entries.filter(
     (entry) =>
       (entry.isDirectory() || entry.isSymbolicLink()) &&
@@ -160,11 +278,15 @@ export async function listDirectories(
           pathExists(resolve(fullPath, '.schema-memory')),
         ]);
 
+        const isRegistered =
+          hasSchemaMemory && registeredPaths.has(normalizePathKey(fullPath));
+
         return {
           name: entry.name,
           path: fullPath,
           isGitRepo,
           hasSchemaMemory,
+          isRegistered,
         };
       } catch {
         return null;

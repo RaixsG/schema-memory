@@ -288,5 +288,15 @@ describe('M5: Server REST API and Security', () => {
       expect(json.current).toBeDefined();
       expect(Array.isArray(json.directories)).toBe(true);
     });
+
+    it('returns system locations from /api/fs/locations', async () => {
+      const res = await app.request('/api/fs/locations', {
+        headers: { host: '127.0.0.1:4317' },
+      });
+      expect(res.status).toBe(200);
+      const json = await res.json();
+      expect(Array.isArray(json.locations)).toBe(true);
+      expect(json.locations.some((l: any) => l.kind === 'home')).toBe(true);
+    });
   });
 });

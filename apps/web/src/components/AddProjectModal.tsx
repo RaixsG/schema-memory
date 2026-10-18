@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { api, ApiError } from '../api';
-import { DirectoryEntry } from '../types';
+import { DirectoryEntry, LocationEntry } from '../types';
 import {
   X,
   Folder,
@@ -13,13 +13,48 @@ import {
   Check,
   ChevronRight,
   Sparkles,
+  HardDrive,
+  Home,
+  Laptop,
+  FileText,
+  Clock,
 } from 'lucide-react';
+
+function getPathBreadcrumbs(fullPath: string): Array<{ label: string; path: string }> {
+  if (!fullPath) return [];
+  const isWin = fullPath.includes('\\') || /^[A-Za-z]:/.test(fullPath);
+  const parts = fullPath.split(/[/\\]+/).filter(Boolean);
+  const crumbs: Array<{ label: string; path: string }> = [];
+
+  if (isWin) {
+    let accumulated = '';
+    for (let i = 0; i < parts.length; i++) {
+      const part = parts[i];
+      if (i === 0 && /^[A-Za-z]:$/.test(part)) {
+        accumulated = `${part}\\`;
+        crumbs.push({ label: `${part}\\`, path: accumulated });
+      } else {
+        accumulated = accumulated.endsWith('\\') ? `${accumulated}${part}` : `${accumulated}\\${part}`;
+        crumbs.push({ label: part, path: accumulated });
+      }
+    }
+  } else {
+    let accumulated = '';
+    crumbs.push({ label: '/', path: '/' });
+    for (const part of parts) {
+      accumulated = `${accumulated}/${part}`;
+      crumbs.push({ label: part, path: accumulated });
+    }
+  }
+  return crumbs;
+}
 
 export function AddProjectModal({ onClose, onAdded }: { onClose: () => void; onAdded: (id: string) => void }) {
   const [step, setStep] = useState<1 | 2 | 3 | 4>(1);
   const [currentPath, setCurrentPath] = useState('');
   const [parentPath, setParentPath] = useState<string | null>(null);
   const [directories, setDirectories] = useState<DirectoryEntry[]>([]);
+  const [locations, setLocations] = useState<LocationEntry[]>([]);
   const [selectedPath, setSelectedPath] = useState('');
   const [manualPath, setManualPath] = useState('');
   const [loading, setLoading] = useState(false);
@@ -58,6 +93,10 @@ export function AddProjectModal({ onClose, onAdded }: { onClose: () => void; onA
   };
 
   useEffect(() => {
+    api
+      .getLocations()
+      .then((res) => setLocations(res.locations))
+      .catch(() => {});
     loadDirectory();
   }, []);
 
@@ -220,22 +259,110 @@ export function AddProjectModal({ onClose, onAdded }: { onClose: () => void; onA
                 Navega y selecciona la carpeta del proyecto o repositorio de tu cliente:
               </p>
 
-              {/* Path bar */}
+              {/* Locations shortcuts bar */}
+              {locations.length > 0 && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  <span
+                    style={{
+                      fontSize: 11,
+                      fontWeight: 600,
+                      color: 'var(--text-muted)',
+                      textTransform: 'uppercase',
+                      letterSpacing: 0.5,
+                    }}
+                  >
+                    Ubicaciones
+                  </span>
+                  <div
+                    style={{
+                      display: 'flex',
+                      gap: 6,
+                      flexWrap: 'wrap',
+                      maxHeight: 76,
+                      overflowY: 'auto',
+                    }}
+                  >
+                    {locations.map((loc) => {
+                      const isCurrent = currentPath === loc.path;
+                      return (
+                        <button
+                          key={loc.id}
+                          type="button"
+                          className="btn btn-secondary"
+                          onClick={() => loadDirectory(loc.path)}
+                          style={{
+                            padding: '4px 8px',
+                            fontSize: 11,
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 5,
+                            borderRadius: 6,
+                            borderColor: isCurrent ? 'var(--accent)' : undefined,
+                            backgroundColor: isCurrent ? 'var(--accent-light)' : undefined,
+                            color: isCurrent ? 'var(--accent)' : undefined,
+                          }}
+                          title={loc.path}
+                        >
+                          {loc.kind === 'home' && <Home size={12} />}
+                          {loc.kind === 'desktop' && <Laptop size={12} />}
+                          {loc.kind === 'documents' && <FileText size={12} />}
+                          {(loc.kind === 'drive' ||
+                            loc.kind === 'volume' ||
+                            loc.kind === 'mount') && <HardDrive size={12} />}
+                          {loc.kind === 'recent' && <Clock size={12} />}
+                          <span>{loc.label}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Path bar with clickable breadcrumbs */}
               <div
                 style={{
                   display: 'flex',
                   alignItems: 'center',
-                  gap: 8,
+                  gap: 4,
                   padding: '6px 10px',
                   backgroundColor: 'var(--bg-tertiary)',
                   borderRadius: 6,
                   fontSize: 12,
                   fontFamily: 'var(--font-mono)',
                   overflowX: 'auto',
+                  whiteSpace: 'nowrap',
                 }}
               >
-                <FolderOpen size={14} color="var(--accent)" />
-                <span>{currentPath}</span>
+                <FolderOpen size={14} color="var(--accent)" style={{ flexShrink: 0 }} />
+                {getPathBreadcrumbs(currentPath).map((crumb, idx, arr) => (
+                  <span
+                    key={crumb.path}
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => loadDirectory(crumb.path)}
+                      style={{
+                        background: 'none',
+                        border: 'none',
+                        padding: '1px 4px',
+                        color:
+                          idx === arr.length - 1
+                            ? 'var(--text-primary)'
+                            : 'var(--accent)',
+                        fontWeight: idx === arr.length - 1 ? 600 : 400,
+                        cursor: 'pointer',
+                        borderRadius: 3,
+                      }}
+                      title={crumb.path}
+                    >
+                      {crumb.label}
+                    </button>
+                    {idx < arr.length - 1 && (
+                      <span style={{ color: 'var(--text-muted)' }}>/</span>
+                    )}
+                  </span>
+                ))}
               </div>
 
               {/* Manual path input */}
@@ -327,7 +454,12 @@ export function AddProjectModal({ onClose, onAdded }: { onClose: () => void; onA
                         <Folder size={14} color={selectedPath === d.path ? 'var(--accent)' : 'var(--text-muted)'} />
                         <span>{d.name}</span>
                         {d.isGitRepo && <span className="badge badge-gray">git</span>}
-                        {d.hasSchemaMemory && <span className="badge badge-green">schema-memory</span>}
+                        {d.hasSchemaMemory && d.isRegistered && (
+                          <span className="badge badge-green">registrado</span>
+                        )}
+                        {d.hasSchemaMemory && !d.isRegistered && (
+                          <span className="badge badge-blue">por registrar</span>
+                        )}
                       </div>
                       <ChevronRight size={14} color="var(--text-muted)" onClick={(e) => { e.stopPropagation(); loadDirectory(d.path); }} />
                     </div>

@@ -4,6 +4,7 @@ import {
   PendingDetails,
   AdrItem,
   DirectoryEntry,
+  LocationEntry,
 } from './types';
 
 const BASE_URL = '';
@@ -72,6 +73,9 @@ export const api = {
     req<{ current: string; parent: string | null; directories: DirectoryEntry[] }>(
       `/api/fs/list${path ? `?path=${encodeURIComponent(path)}` : ''}`
     ),
+
+  getLocations: () =>
+    req<{ locations: LocationEntry[] }>('/api/fs/locations'),
 
   getProjectSchema: (id: string) =>
     req<{
