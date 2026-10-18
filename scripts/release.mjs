@@ -254,8 +254,21 @@ Options:
     }
   }
 
+  const lockfilePath = resolve(rootDir, 'pnpm-lock.yaml');
+  if (!dryRun && existsSync(lockfilePath)) {
+    console.log('\n📦 Refreshing pnpm-lock.yaml...');
+    try {
+      execSync('pnpm install --lockfile-only', { cwd: rootDir, stdio: 'inherit' });
+    } catch (err) {
+      console.warn('⚠️  Could not refresh lockfile automatically:', err.message);
+    }
+  }
+
   // 10. Git commit & tag
   const relPaths = packageFiles.map((f) => relative(rootDir, f));
+  if (existsSync(lockfilePath)) {
+    relPaths.push('pnpm-lock.yaml');
+  }
   const commitMsg = `chore(release): ${nextTag}`;
 
   if (dryRun) {
