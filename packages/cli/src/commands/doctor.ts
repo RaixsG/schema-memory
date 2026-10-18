@@ -11,6 +11,7 @@ import {
 } from '@schema-memory/core';
 import { findCommandOnPath, fallbackShimExists, isWindows } from '../platform.js';
 import { readSetupState } from '../setup-state.js';
+import { isCorruptedShimContent } from '../windows-shim.js';
 
 export interface DoctorCheckResult {
   name: string;
@@ -45,8 +46,38 @@ export async function runDoctorChecks(options?: {
   const smOnPath = findCommandOnPath('sm') ?? findCommandOnPath('schema-memory');
   const fallbackShim = fallbackShimExists(resolve(home, '.local', 'bin'));
   const smBinExists = smOnPath !== null || fallbackShim !== null;
+
+  const localBinDir = resolve(home, '.local', 'bin');
+  const candidateFiles = [
+    smOnPath,
+    fallbackShim,
+    resolve(localBinDir, 'sm.cmd'),
+    resolve(localBinDir, 'sm.ps1'),
+    resolve(localBinDir, 'sm'),
+    resolve(localBinDir, 'schema-memory.cmd'),
+    resolve(localBinDir, 'schema-memory.ps1'),
+    resolve(localBinDir, 'schema-memory'),
+  ].filter((p): p is string => Boolean(p && existsSync(p)));
+
+  let corruptedShimPath: string | null = null;
+  for (const file of candidateFiles) {
+    try {
+      const content = await readIfExists(file);
+      if (content && isCorruptedShimContent(content)) {
+        corruptedShimPath = file;
+        break;
+      }
+    } catch {
+      // ignore read error
+    }
+  }
+
+  let smOk = smBinExists;
   let smDetail: string;
-  if (smOnPath) {
+  if (corruptedShimPath) {
+    smOk = false;
+    smDetail = `Corrupted cross-drive shim detected at "${corruptedShimPath}". Run "sm setup --cli-only" (or "pnpm sm setup --cli-only") to repair.`;
+  } else if (smOnPath) {
     smDetail = `Resolved on PATH: ${smOnPath}`;
   } else if (fallbackShim) {
     smDetail = isWindows
@@ -59,7 +90,7 @@ export async function runDoctorChecks(options?: {
   }
   results.push({
     name: 'Global CLI (sm)',
-    ok: smBinExists,
+    ok: smOk,
     detail: smDetail,
   });
 

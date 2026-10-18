@@ -5,7 +5,7 @@ import { existsSync } from 'node:fs';
 import { chmod, rm, symlink } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 import { createInterface } from 'node:readline';
-import cmdShim from 'cmd-shim';
+import { createWindowsShim } from '../windows-shim.js';
 import {
   atomicWrite,
   ensureDir,
@@ -204,8 +204,8 @@ export interface LinkCliResult {
  * - Skips linking when the command already resolves on PATH outside our
  *   managed bin dir (e.g. an npm/pnpm global install, which is the
  *   recommended, cross-platform way).
- * - Windows: generates .cmd / .ps1 / sh shims with cmd-shim (the same tool
- *   npm uses), since symlinks without extensions are not executable there.
+ * - Windows: generates .cmd / .ps1 / sh shims with createWindowsShim (cross-drive aware),
+ *   since symlinks without extensions are not executable there.
  * - Unix: keeps the chmod + symlink approach.
  */
 export async function linkCliBinary(cliDistPath: string): Promise<LinkCliResult> {
@@ -225,11 +225,7 @@ export async function linkCliBinary(cliDistPath: string): Promise<LinkCliResult>
   if (isWindows) {
     for (const name of ['sm', 'schema-memory']) {
       const target = resolve(binDir, name);
-      // Remove previous artifacts (including legacy extensionless symlinks).
-      await rm(target, { force: true });
-      await rm(`${target}.cmd`, { force: true });
-      await rm(`${target}.ps1`, { force: true });
-      await cmdShim(cliDistPath, target);
+      await createWindowsShim(cliDistPath, target);
     }
   } else {
     await chmod(cliDistPath, 0o755);
@@ -458,9 +454,19 @@ When working on a repository that contains \`.schema-memory/\` or references \`s
   }
 
   // 4. Global CLI binary
+  const binDir = getBinDir();
   const smOnPath = findCommandOnPath('sm') ?? findCommandOnPath('schema-memory');
-  if (smOnPath) {
+  const isExternalGlobal = smOnPath && !isWithinDir(smOnPath, binDir);
+
+  if (isExternalGlobal) {
     installedTargets.push(`Global CLI: already available on PATH (${smOnPath})`);
+  } else if (smOnPath && isWithinDir(smOnPath, binDir)) {
+    try {
+      const link = await linkCliBinary(cliDistPath);
+      installedTargets.push(`Global CLI: refreshed in ${link.binDir}`);
+    } catch (error: any) {
+      warnings.push(`Could not refresh global CLI shims: ${error.message}`);
+    }
   } else if (options.installGlobal === false) {
     if (!ephemeralRunner) {
       try {
