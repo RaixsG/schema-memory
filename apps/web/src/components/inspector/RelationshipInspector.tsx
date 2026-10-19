@@ -1,5 +1,6 @@
 import { useSchemaStore } from '../../store';
 import { Link2, Hash, Trash2 } from 'lucide-react';
+import { getRelationshipDisplay } from '../../lib/relationships';
 
 export function RelationshipInspector() {
   const selectedEdgeIndex = useSchemaStore((s) => s.selectedEdgeIndex);
@@ -14,6 +15,10 @@ export function RelationshipInspector() {
     return null;
   }
 
+  const display = getRelationshipDisplay(selectedRef);
+  const source = selectedRef[display.sourceSide];
+  const target = selectedRef[display.targetSide];
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       {/* Header / Title */}
@@ -25,7 +30,9 @@ export function RelationshipInspector() {
           </h3>
         </div>
         <p style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-          Vínculo referencial entre tablas
+          {display.fkSide
+            ? 'La flecha va desde la tabla con FK hacia la tabla referenciada.'
+            : 'Relación sin un lado FK único.'}
         </p>
       </div>
 
@@ -52,24 +59,24 @@ export function RelationshipInspector() {
               letterSpacing: 0.5,
             }}
           >
-            Tabla Origen (FK)
+            {display.fkSide ? 'Tabla con FK' : 'Tabla A'}
           </span>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
               <Hash size={13} color="#3b82f6" />
               <span style={{ fontWeight: 600, fontSize: 13, color: 'var(--text-primary)' }}>
-                {selectedRef.from.table}
+                {source.table}
               </span>
               <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>.</span>
               <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: '#93c5fd' }}>
-                {selectedRef.from.columns.join(', ')}
+                {source.columns.join(', ')}
               </span>
             </div>
             <button
               className="btn btn-secondary"
               style={{ padding: '2px 8px', fontSize: 11 }}
-              onClick={() => setSelectedTable(selectedRef.from.table)}
-              title={`Inspeccionar tabla ${selectedRef.from.table}`}
+              onClick={() => setSelectedTable(source.table)}
+              title={`Inspeccionar tabla ${source.table}`}
             >
               Ver tabla
             </button>
@@ -98,13 +105,7 @@ export function RelationshipInspector() {
               borderRadius: 12,
             }}
           >
-            {selectedRef.relation === 'many-to-one'
-              ? 'N : 1'
-              : selectedRef.relation === 'one-to-many'
-              ? '1 : N'
-              : selectedRef.relation === 'one-to-one'
-              ? '1 : 1'
-              : 'N : M'}
+            {display.relationLabel}
           </span>
           <div style={{ flex: 1, height: 1, backgroundColor: 'var(--border)' }} />
         </div>
@@ -120,24 +121,24 @@ export function RelationshipInspector() {
               letterSpacing: 0.5,
             }}
           >
-            Tabla Destino (Referenciada)
+            {display.referencedSide ? 'Tabla referenciada' : 'Tabla B'}
           </span>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
               <Hash size={13} color="#10b981" />
               <span style={{ fontWeight: 600, fontSize: 13, color: 'var(--text-primary)' }}>
-                {selectedRef.to.table}
+                {target.table}
               </span>
               <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>.</span>
               <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: '#6ee7b7' }}>
-                {selectedRef.to.columns.join(', ')}
+                {target.columns.join(', ')}
               </span>
             </div>
             <button
               className="btn btn-secondary"
               style={{ padding: '2px 8px', fontSize: 11 }}
-              onClick={() => setSelectedTable(selectedRef.to.table)}
-              title={`Inspeccionar tabla ${selectedRef.to.table}`}
+              onClick={() => setSelectedTable(target.table)}
+              title={`Inspeccionar tabla ${target.table}`}
             >
               Ver tabla
             </button>

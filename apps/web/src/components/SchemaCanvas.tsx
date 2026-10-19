@@ -4,9 +4,10 @@ import {
   Background,
   Controls,
   ControlButton,
+  Panel,
   useReactFlow,
   Node,
-  Edge,
+  EdgeChange,
   MarkerType,
   Connection,
   useNodesState,
@@ -15,11 +16,34 @@ import {
 import '@xyflow/react/dist/style.css';
 import { useSchemaStore } from '../store';
 import { TableNode } from './TableNode';
+import { SchemaEdge } from './SchemaEdge';
+import type { SchemaEdgeType } from './SchemaEdge';
 import { Ref } from '../types';
-import { ZoomIn, ZoomOut, Focus, Maximize, Minimize, Lock, Unlock } from 'lucide-react';
+import {
+  formatRelationshipLabel,
+  getRelationshipDisplay,
+  isDuplicateRef,
+  parseHandleId,
+} from '../lib/relationships';
+import { computeAutoLayout, type LayoutDirection } from '../lib/layout';
+import { preserveNodeMeasurements } from '../lib/nodes';
+import {
+  ZoomIn,
+  ZoomOut,
+  Focus,
+  Maximize,
+  Minimize,
+  Lock,
+  Unlock,
+  LayoutGrid,
+} from 'lucide-react';
 
 const nodeTypes = {
   table: TableNode,
+};
+
+const edgeTypes = {
+  schema: SchemaEdge,
 };
 
 function CanvasControls({
@@ -34,9 +58,53 @@ function CanvasControls({
   onToggleFullscreen: () => void;
 }) {
   const { zoomIn, zoomOut, fitView } = useReactFlow();
+  const model = useSchemaStore((state) => state.model);
+  const layout = useSchemaStore((state) => state.layout);
+  const applyLayout = useSchemaStore((state) => state.applyLayout);
+  const projectId = useSchemaStore((state) => state.projectId);
+  const autoLayoutProject = useRef<string | null>(null);
+
+  const runAutoLayout = useCallback(
+    async (direction: LayoutDirection = 'LR') => {
+      if (!model || model.tables.length === 0) return;
+
+      try {
+        const nextLayout = await computeAutoLayout(
+          model.tables,
+          model.refs,
+          direction
+        );
+        applyLayout(nextLayout);
+        requestAnimationFrame(() => {
+          fitView({ padding: 0.22, duration: 450 });
+        });
+      } catch (error) {
+        console.error('Could not compute the automatic layout', error);
+      }
+    },
+    [model, applyLayout, fitView]
+  );
+
+  useEffect(() => {
+    if (!model || model.tables.length === 0) return;
+    if (Object.keys(layout).length > 0) return;
+    if (autoLayoutProject.current === projectId) return;
+
+    autoLayoutProject.current = projectId;
+    void runAutoLayout('LR');
+  }, [model, layout, projectId, runAutoLayout]);
 
   return (
     <Controls showZoom={false} showFitView={false} showInteractive={false}>
+      <ControlButton
+        onClick={(event) =>
+          void runAutoLayout(event.shiftKey ? 'TB' : 'LR')
+        }
+        title="Auto layout (Shift: vertical)"
+        aria-label="Auto layout"
+      >
+        <LayoutGrid size={14} />
+      </ControlButton>
       <ControlButton
         onClick={() => zoomIn({ duration: 300 })}
         title="Acercar (Zoom In)"
@@ -86,6 +154,8 @@ export function SchemaCanvas() {
   const containerRef = useRef<HTMLDivElement>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isLocked, setIsLocked] = useState(false);
+  const [hoveredTable, setHoveredTable] = useState<string | null>(null);
+  const [hoveredEdgeIndex, setHoveredEdgeIndex] = useState<number | null>(null);
 
   const model = useSchemaStore((s) => s.model);
   const layout = useSchemaStore((s) => s.layout);
@@ -95,6 +165,7 @@ export function SchemaCanvas() {
   const selectedEdgeIndex = useSchemaStore((s) => s.selectedEdgeIndex);
   const setSelectedEdgeIndex = useSchemaStore((s) => s.setSelectedEdgeIndex);
   const addRef = useSchemaStore((s) => s.addRef);
+  const removeRef = useSchemaStore((s) => s.removeRef);
 
   const toggleFullscreen = useCallback(() => {
     if (!containerRef.current) return;
@@ -147,6 +218,15 @@ const EMPTY_HIGHLIGHTS: Array<{ name: string; role: 'source' | 'target' }> = [];
       list.push({ name: colName, role });
     };
 
+    const focusEdgeIndex =
+      selectedEdgeIndex !== null
+        ? selectedEdgeIndex
+        : selectedTable
+          ? null
+          : hoveredEdgeIndex;
+    const focusTable =
+      selectedEdgeIndex !== null ? null : selectedTable ?? hoveredTable;
+
     if (!model) {
       return {
         selectedRef: null,
@@ -159,49 +239,54 @@ const EMPTY_HIGHLIGHTS: Array<{ name: string; role: 'source' | 'target' }> = [];
       };
     }
 
-    if (selectedEdgeIndex !== null && model.refs[selectedEdgeIndex]) {
-      const ref = model.refs[selectedEdgeIndex];
-      const activeTableNames = new Set<string>([ref.from.table, ref.to.table]);
-      ref.from.columns.forEach((colName) =>
-        addHighlight(ref.from.table, colName, 'source')
+    if (focusEdgeIndex !== null && model.refs[focusEdgeIndex]) {
+      const ref = model.refs[focusEdgeIndex];
+      const display = getRelationshipDisplay(ref);
+      const source = ref[display.sourceSide];
+      const target = ref[display.targetSide];
+      const activeTableNames = new Set<string>([source.table, target.table]);
+
+      source.columns.forEach((colName) =>
+        addHighlight(source.table, colName, 'source')
       );
-      ref.to.columns.forEach((colName) =>
-        addHighlight(ref.to.table, colName, 'target')
+      target.columns.forEach((colName) =>
+        addHighlight(target.table, colName, 'target')
       );
+
       return {
         selectedRef: ref,
         activeTableNames,
-        sourceTableName: ref.from.table,
-        targetTableName: ref.to.table,
-        connectedEdgeIndices: new Set<number>([selectedEdgeIndex]),
+        sourceTableName: source.table,
+        targetTableName: target.table,
+        connectedEdgeIndices: new Set<number>([focusEdgeIndex]),
         highlightedByTable,
         isFiltering: true,
       };
     }
 
-    if (selectedTable) {
-      const activeTableNames = new Set<string>([selectedTable]);
+    if (focusTable) {
+      const activeTableNames = new Set<string>([focusTable]);
       const connectedEdgeIndices = new Set<number>();
 
-      model.refs.forEach((r, idx) => {
-        if (r.from.table === selectedTable || r.to.table === selectedTable) {
-          connectedEdgeIndices.add(idx);
-          activeTableNames.add(r.from.table);
-          activeTableNames.add(r.to.table);
-
-          if (r.to.table === selectedTable) {
-            r.from.columns.forEach((c) => addHighlight(r.from.table, c, 'source'));
-          }
-          if (r.from.table === selectedTable) {
-            r.to.columns.forEach((c) => addHighlight(r.to.table, c, 'target'));
-          }
-          if (r.from.table === selectedTable) {
-            r.from.columns.forEach((c) => addHighlight(selectedTable, c, 'source'));
-          }
-          if (r.to.table === selectedTable) {
-            r.to.columns.forEach((c) => addHighlight(selectedTable, c, 'target'));
-          }
+      model.refs.forEach((ref, idx) => {
+        if (ref.from.table !== focusTable && ref.to.table !== focusTable) {
+          return;
         }
+
+        connectedEdgeIndices.add(idx);
+        const display = getRelationshipDisplay(ref);
+        const source = ref[display.sourceSide];
+        const target = ref[display.targetSide];
+
+        activeTableNames.add(source.table);
+        activeTableNames.add(target.table);
+
+        source.columns.forEach((column) =>
+          addHighlight(source.table, column, 'source')
+        );
+        target.columns.forEach((column) =>
+          addHighlight(target.table, column, 'target')
+        );
       });
 
       return {
@@ -224,7 +309,13 @@ const EMPTY_HIGHLIGHTS: Array<{ name: string; role: 'source' | 'target' }> = [];
       highlightedByTable,
       isFiltering: false,
     };
-  }, [model, selectedEdgeIndex, selectedTable]);
+  }, [
+    model,
+    selectedEdgeIndex,
+    selectedTable,
+    hoveredEdgeIndex,
+    hoveredTable,
+  ]);
 
   // Keep latest layout in ref so dragging a single node does not invalidate all TableNode memos
   const layoutRef = useRef(layout);
@@ -275,11 +366,28 @@ const EMPTY_HIGHLIGHTS: Array<{ name: string; role: 'source' | 'target' }> = [];
   }, [model, selectedTable, activeContext]);
 
   // Build edges from model.refs
-  const initialEdges: Edge[] = useMemo(() => {
+  const initialEdges: SchemaEdgeType[] = useMemo(() => {
     if (!model) return [];
+
+    const parallelGroups = new Map<string, number[]>();
+    model.refs.forEach((ref, idx) => {
+      const display = getRelationshipDisplay(ref);
+      const source = ref[display.sourceSide].table;
+      const target = ref[display.targetSide].table;
+      const key = [source, target].sort().join('::');
+      const group = parallelGroups.get(key) ?? [];
+      group.push(idx);
+      parallelGroups.set(key, group);
+    });
+
     return model.refs.map((ref, idx) => {
-      const fromCol = ref.from.columns[0] || 'id';
-      const toCol = ref.to.columns[0] || 'id';
+      const display = getRelationshipDisplay(ref);
+      const source = ref[display.sourceSide];
+      const target = ref[display.targetSide];
+      const groupKey = [source.table, target.table].sort().join('::');
+      const group = parallelGroups.get(groupKey) ?? [idx];
+      const parallelIndex = group.indexOf(idx);
+      const parallelCount = group.length;
 
       const isSelectedEdge = selectedEdgeIndex === idx;
       const isConnectedToActive = activeContext.connectedEdgeIndices.has(idx);
@@ -307,53 +415,47 @@ const EMPTY_HIGHLIGHTS: Array<{ name: string; role: 'source' | 'target' }> = [];
         strokeWidth = 1;
       }
 
-      // Format relation symbol / badge label
-      let relationLabel = '';
-      if (ref.relation === 'many-to-one') relationLabel = 'N : 1';
-      else if (ref.relation === 'one-to-many') relationLabel = '1 : N';
-      else if (ref.relation === 'one-to-one') relationLabel = '1 : 1';
-      else if (ref.relation === 'many-to-many') relationLabel = 'N : M';
-
       return {
         id: `ref-${idx}`,
-        source: ref.from.table,
-        target: ref.to.table,
-        sourceHandle: `${fromCol}-r`,
-        targetHandle: `${toCol}-l`,
-        type: 'smoothstep',
+        source: source.table,
+        target: target.table,
+        type: 'schema',
         animated: isAnimated,
         zIndex,
         selected: isSelectedEdge,
         interactionWidth: 20,
-        label: isSelectedEdge || isConnectedToActive ? relationLabel : undefined,
-        labelStyle: {
-          fontSize: 10,
-          fontWeight: 700,
-          fill: isSelectedEdge ? '#93c5fd' : '#cbd5e1',
-          fontFamily: 'var(--font-mono)',
+        data: {
+          refIndex: idx,
+          refLabel: formatRelationshipLabel(ref),
+          relationLabel: display.visualLabel,
+          sourceCardinality: display.sourceCardinality,
+          targetCardinality: display.targetCardinality,
+          isSelected: isSelectedEdge,
+          isActive: isConnectedToActive,
+          isDimmed,
+          isManyToMany: ref.relation === 'many-to-many',
+          parallelIndex,
+          parallelCount,
         },
-        labelBgStyle: {
-          fill: '#1a1e2b',
-          fillOpacity: 0.95,
-          stroke: isSelectedEdge ? '#3b82f6' : 'var(--border)',
-          strokeWidth: 1,
-          rx: 4,
-          ry: 4,
-        },
-        labelBgPadding: [6, 3] as [number, number],
         style: {
           stroke: strokeColor,
           strokeWidth,
           filter,
           opacity: isDimmed ? 0.15 : 1,
-          transition: 'stroke 0.2s ease, stroke-width 0.2s ease, opacity 0.2s ease',
+          transition:
+            'stroke 0.2s ease, stroke-width 0.2s ease, opacity 0.2s ease',
+          strokeDasharray:
+            ref.relation === 'many-to-many' ? '6 4' : undefined,
         },
-        markerEnd: {
-          type: MarkerType.ArrowClosed,
-          color: strokeColor,
-          width: isSelectedEdge ? 16 : 14,
-          height: isSelectedEdge ? 16 : 14,
-        },
+        markerEnd:
+          ref.relation === 'many-to-many'
+            ? undefined
+            : {
+                type: MarkerType.ArrowClosed,
+                color: strokeColor,
+                width: isSelectedEdge ? 16 : 14,
+                height: isSelectedEdge ? 16 : 14,
+              },
       };
     });
   }, [model, selectedEdgeIndex, activeContext]);
@@ -362,7 +464,12 @@ const EMPTY_HIGHLIGHTS: Array<{ name: string; role: 'source' | 'target' }> = [];
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
 
   useEffect(() => {
-    setNodes(initialNodes);
+    // Rebuilt nodes lose their measured size, which makes React Flow hide them
+    // until the ResizeObserver runs again. Keep the measurements to avoid the
+    // hover-induced blink on the whole canvas.
+    setNodes((currentNodes) =>
+      preserveNodeMeasurements(initialNodes, currentNodes)
+    );
   }, [initialNodes, setNodes]);
 
   useEffect(() => {
@@ -377,21 +484,88 @@ const EMPTY_HIGHLIGHTS: Array<{ name: string; role: 'source' | 'target' }> = [];
     [isLocked, updateLayout]
   );
 
-  const onConnect = useCallback(
-    (params: Connection) => {
-      if (isLocked) return;
-      if (!params.source || !params.target) return;
-      const sourceCol = (params.sourceHandle || '').replace(/-[lr]$/, '');
-      const targetCol = (params.targetHandle || '').replace(/-[lr]$/, '');
+  const handleEdgesChange = useCallback(
+    (changes: EdgeChange<SchemaEdgeType>[]) => {
+      onEdgesChange(changes);
 
-      const newRef: Ref = {
-        from: { table: params.source, columns: [sourceCol] },
-        to: { table: params.target, columns: [targetCol] },
+      const removals = changes.filter((change) => change.type === 'remove');
+      if (removals.length === 0) return;
+
+      const indices = removals
+        .map((change) => Number(change.id.replace('ref-', '')))
+        .filter((index) => Number.isInteger(index) && index >= 0)
+        .sort((a, b) => b - a);
+
+      for (const index of indices) {
+        removeRef(index);
+      }
+    },
+    [onEdgesChange, removeRef]
+  );
+
+  const isValidConnection = useCallback(
+    (connection: Connection | SchemaEdgeType) => {
+      if (!model || !connection.source || !connection.target) return false;
+
+      const sourceColumn = parseHandleId(connection.sourceHandle);
+      const targetColumn = parseHandleId(connection.targetHandle);
+      if (!sourceColumn || !targetColumn) return false;
+
+      const sourceTable = model.tables.find(
+        (table) => table.name === connection.source
+      );
+      const targetTable = model.tables.find(
+        (table) => table.name === connection.target
+      );
+
+      if (
+        !sourceTable?.columns.some((column) => column.name === sourceColumn) ||
+        !targetTable?.columns.some((column) => column.name === targetColumn)
+      ) {
+        return false;
+      }
+
+      const candidate: Ref = {
+        from: { table: connection.source, columns: [sourceColumn] },
+        to: { table: connection.target, columns: [targetColumn] },
         relation: 'many-to-one',
       };
+
+      return !isDuplicateRef(model.refs, candidate);
+    },
+    [model]
+  );
+
+  const onConnect = useCallback(
+    (params: Connection) => {
+      if (isLocked || !model) return;
+      if (!params.source || !params.target) return;
+
+      const sourceColumnName = parseHandleId(params.sourceHandle);
+      const targetColumnName = parseHandleId(params.targetHandle);
+      if (!sourceColumnName || !targetColumnName) return;
+
+      const sourceTable = model.tables.find(
+        (table) => table.name === params.source
+      );
+      const sourceColumn = sourceTable?.columns.find(
+        (column) => column.name === sourceColumnName
+      );
+      const relation =
+        sourceColumn?.pk || sourceColumn?.unique
+          ? 'one-to-one'
+          : 'many-to-one';
+
+      const newRef: Ref = {
+        from: { table: params.source, columns: [sourceColumnName] },
+        to: { table: params.target, columns: [targetColumnName] },
+        relation,
+      };
+
+      if (isDuplicateRef(model.refs, newRef)) return;
       addRef(newRef);
     },
-    [isLocked, addRef]
+    [isLocked, model, addRef]
   );
 
   return (
@@ -436,15 +610,26 @@ const EMPTY_HIGHLIGHTS: Array<{ name: string; role: 'source' | 'target' }> = [];
         nodes={nodes}
         edges={edges}
         nodeTypes={nodeTypes}
+        edgeTypes={edgeTypes}
         onNodesChange={isLocked ? undefined : onNodesChange}
-        onEdgesChange={isLocked ? undefined : onEdgesChange}
+        onEdgesChange={isLocked ? undefined : handleEdgesChange}
+        isValidConnection={isValidConnection}
         onNodeDragStop={onNodeDragStop}
         onNodeClick={isLocked ? undefined : (_, node) => setSelectedTable(node.id)}
+        onNodeMouseEnter={isLocked ? undefined : (_, node) => setHoveredTable(node.id)}
+        onNodeMouseLeave={isLocked ? undefined : () => setHoveredTable(null)}
         onEdgeClick={
           isLocked
             ? undefined
             : (_, edge) => setSelectedEdgeIndex(Number(edge.id.replace('ref-', '')))
         }
+        onEdgeMouseEnter={
+          isLocked
+            ? undefined
+            : (_, edge) =>
+                setHoveredEdgeIndex(Number(edge.id.replace('ref-', '')))
+        }
+        onEdgeMouseLeave={isLocked ? undefined : () => setHoveredEdgeIndex(null)}
         onPaneClick={
           isLocked
             ? undefined
@@ -466,6 +651,37 @@ const EMPTY_HIGHLIGHTS: Array<{ name: string; role: 'source' | 'target' }> = [];
           isFullscreen={isFullscreen}
           onToggleFullscreen={toggleFullscreen}
         />
+        <Panel position="bottom-right" style={{ pointerEvents: 'none' }}>
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 10,
+              backgroundColor: 'rgba(17, 24, 39, 0.92)',
+              border: '1px solid var(--border)',
+              borderRadius: 8,
+              padding: '6px 10px',
+              fontSize: 10,
+              color: 'var(--text-secondary)',
+              fontFamily: 'var(--font-mono)',
+            }}
+          >
+            <span>
+              <span style={{ color: '#93c5fd', fontWeight: 800 }}>N</span> FK
+            </span>
+            <span>
+              <span style={{ color: '#6ee7b7', fontWeight: 800 }}>1</span>{' '}
+              referenciada
+            </span>
+            <span style={{ borderLeft: '1px solid var(--border)', paddingLeft: 10 }}>
+              1:1
+            </span>
+            <span>1:N</span>
+            <span style={{ borderTop: '1px dashed #94a3b8', paddingTop: 2 }}>
+              N:M
+            </span>
+          </div>
+        </Panel>
       </ReactFlow>
     </div>
   );

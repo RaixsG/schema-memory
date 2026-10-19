@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { SchemaModel, Table, Column, Ref, PendingDetails, AdrItem } from './types';
 import { api } from './api';
+import { removeRefsForColumn, renameColumnInRefs } from './lib/relationships';
 
 interface SchemaStore {
   projectId: string | null;
@@ -28,6 +29,7 @@ interface SchemaStore {
   ) => Promise<void>;
   syncIfNeeded: (incomingFingerprint?: string) => Promise<boolean>;
   updateLayout: (tableName: string, pos: { x: number; y: number }) => void;
+  applyLayout: (layout: Record<string, { x: number; y: number }>) => void;
   setSelectedTable: (tableName: string | null) => void;
   setSelectedColumn: (colName: string | null) => void;
   setSelectedEdgeIndex: (index: number | null) => void;
@@ -162,6 +164,20 @@ export const useSchemaStore = create<SchemaStore>((set, get) => ({
     }
   },
 
+  applyLayout: (layout: Record<string, { x: number; y: number }>) => {
+    const { projectId } = get();
+    set({ layout });
+
+    if (saveTimer) {
+      clearTimeout(saveTimer);
+      saveTimer = null;
+    }
+
+    if (projectId) {
+      api.updateLayout(projectId, layout).catch(console.error);
+    }
+  },
+
   setSelectedTable: (tableName: string | null) =>
     set({ selectedTable: tableName, selectedColumn: null, selectedEdgeIndex: null }),
   setSelectedColumn: (colName: string | null) => set({ selectedColumn: colName }),
@@ -293,7 +309,7 @@ export const useSchemaStore = create<SchemaStore>((set, get) => ({
   },
 
   updateColumn: async (tableName: string, oldColName: string, column: Column) => {
-    const { model, projectId } = get();
+    const { model, projectId, selectedColumn } = get();
     if (!model || !projectId) return;
 
     const updatedTables = model.tables.map((t) => {
@@ -304,8 +320,23 @@ export const useSchemaStore = create<SchemaStore>((set, get) => ({
       };
     });
 
-    const updatedModel = { ...model, tables: updatedTables };
-    set({ model: updatedModel });
+    const updatedRefs = renameColumnInRefs(
+      model.refs,
+      tableName,
+      oldColName,
+      column.name
+    );
+
+    const updatedModel = {
+      ...model,
+      tables: updatedTables,
+      refs: updatedRefs,
+    };
+    set({
+      model: updatedModel,
+      selectedColumn:
+        selectedColumn === oldColName ? column.name : selectedColumn,
+    });
 
     const { details, fingerprint } = await api.savePending(projectId, { model: updatedModel });
     set({
@@ -324,8 +355,21 @@ export const useSchemaStore = create<SchemaStore>((set, get) => ({
       return { ...t, columns: t.columns.filter((c) => c.name !== colName) };
     });
 
-    const updatedModel = { ...model, tables: updatedTables };
-    set({ model: updatedModel });
+    const { refs: updatedRefs, removed } = removeRefsForColumn(
+      model.refs,
+      tableName,
+      colName
+    );
+
+    const updatedModel = {
+      ...model,
+      tables: updatedTables,
+      refs: updatedRefs,
+    };
+    set({
+      model: updatedModel,
+      selectedEdgeIndex: removed > 0 ? null : get().selectedEdgeIndex,
+    });
 
     const { details, fingerprint } = await api.savePending(projectId, { model: updatedModel });
     set({
@@ -340,7 +384,12 @@ export const useSchemaStore = create<SchemaStore>((set, get) => ({
     if (!model || !projectId) return;
 
     const updatedModel = { ...model, refs: [...model.refs, ref] };
-    set({ model: updatedModel });
+    set({
+      model: updatedModel,
+      selectedEdgeIndex: model.refs.length,
+      selectedTable: null,
+      selectedColumn: null,
+    });
 
     const { details, fingerprint } = await api.savePending(projectId, { model: updatedModel });
     set({

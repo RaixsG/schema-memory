@@ -41,7 +41,9 @@ export const TableNode = memo(function TableNode({
     <div
       onClick={data.onSelect}
       style={{
-        minWidth: 220,
+        width: 240,
+        minWidth: 240,
+        boxSizing: 'border-box',
         backgroundColor: 'var(--bg-secondary)',
         border: `2px solid ${borderColor}`,
         borderRadius: 8,
@@ -70,16 +72,35 @@ export const TableNode = memo(function TableNode({
           justifyContent: 'space-between',
         }}
       >
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 6,
+            minWidth: 0,
+            flex: '1 1 auto',
+          }}
+        >
           <Hash
             size={14}
             color={isEndpoint === 'source' ? '#3b82f6' : isEndpoint === 'target' ? '#10b981' : 'var(--accent)'}
           />
-          <span style={{ fontWeight: 700, fontSize: 13, color: 'var(--text-primary)' }}>
+          <span
+            title={data.name}
+            style={{
+              fontWeight: 700,
+              fontSize: 13,
+              color: 'var(--text-primary)',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+              minWidth: 0,
+            }}
+          >
             {data.name}
           </span>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
           {isEndpoint === 'source' && (
             <span
               style={{
@@ -172,6 +193,7 @@ export const TableNode = memo(function TableNode({
                 type="target"
                 position={Position.Left}
                 id={`${col.name}-l`}
+                className="schema-handle"
                 style={{
                   background: handleColor,
                   width: handleSize,
@@ -183,9 +205,19 @@ export const TableNode = memo(function TableNode({
                 }}
               />
 
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                {col.pk && <Key size={12} color="#fbbf24" />}
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  minWidth: 0,
+                  flex: '1 1 auto',
+                  overflow: 'hidden',
+                }}
+              >
+                {col.pk && <Key size={12} color="#fbbf24" style={{ flexShrink: 0 }} />}
                 <span
+                  title={col.name}
                   style={{
                     fontWeight: col.pk || highlight ? 600 : 400,
                     color: isSourceCol
@@ -195,6 +227,10 @@ export const TableNode = memo(function TableNode({
                       : col.pk
                       ? '#fde68a'
                       : 'var(--text-primary)',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                    minWidth: 0,
                   }}
                 >
                   {col.name}
@@ -202,6 +238,7 @@ export const TableNode = memo(function TableNode({
                 {isSourceCol && (
                   <span
                     style={{
+                      flexShrink: 0,
                       fontSize: 8,
                       fontWeight: 800,
                       color: '#93c5fd',
@@ -216,6 +253,7 @@ export const TableNode = memo(function TableNode({
                 {isTargetCol && (
                   <span
                     style={{
+                      flexShrink: 0,
                       fontSize: 8,
                       fontWeight: 800,
                       color: '#6ee7b7',
@@ -229,13 +267,33 @@ export const TableNode = memo(function TableNode({
                 )}
               </div>
 
-              <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
-                <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 5,
+                  flexShrink: 0,
+                  marginLeft: 6,
+                  maxWidth: 82,
+                }}
+              >
+                <span
+                  title={col.type}
+                  style={{
+                    color: 'var(--text-muted)',
+                    fontSize: 11,
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                    minWidth: 0,
+                  }}
+                >
                   {col.type}
                 </span>
                 {col.unique && !col.pk && (
                   <span
                     style={{
+                      flexShrink: 0,
                       fontSize: 9,
                       fontWeight: 700,
                       background: 'rgba(139, 92, 246, 0.25)',
@@ -255,6 +313,7 @@ export const TableNode = memo(function TableNode({
                 type="source"
                 position={Position.Right}
                 id={`${col.name}-r`}
+                className="schema-handle"
                 style={{
                   background: handleColor,
                   width: handleSize,

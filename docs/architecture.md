@@ -124,8 +124,11 @@ Punto de entrada empaquetado para distribución en npm:
 
 ### 3.5 `apps/web` (`apps/web/`)
 Single Page Application reactiva:
-- **`SchemaCanvas.tsx`**: Lienzo visual basado en `@xyflow/react` v12 con zoom, pan, modo bloqueo (`Lock`/`Unlock`) y centrado animado (`fitView`).
-- **`TableNode.tsx`**: Nodo visual con handles de conexión, badges PK/FK/UQ y notas.
+- **`SchemaCanvas.tsx`**: Lienzo visual basado en `@xyflow/react` v12 con zoom, pan, modo bloqueo (`Lock`/`Unlock`), centrado animado (`fitView`), hover de tablas/relaciones y auto-layout Dagre (horizontal/vertical) que persiste en `layout.json`.
+- **`SchemaEdge.tsx`**: Arista flotante que se conecta al lado más cercano de cada tabla, con badges de cardinalidad (`1`/`N`/`M`), etiqueta `tabla.columna → tabla.columna` al hacer hover/seleccionar, separación de aristas paralelas y loop para self-references.
+- **`TableNode.tsx`**: Nodo visual con handles de conexión (visibles al hacer hover), badges PK/FK/UQ y notas.
+- **`lib/relationships.ts`**: Normalización de dirección FK/referenciada, etiquetas, cardinalidades y mantenimiento de refs al renombrar/eliminar columnas.
+- **`lib/layout.ts`**: Cálculo de posiciones con Dagre para el auto-layout.
 - **`Inspector.tsx`**: Panel lateral para edición de atributos de tablas y campos.
 - **`PendingDrawer.tsx`**: Cajón de diferencias pendientes con botón para copiar el prompt de debate para el agente de IA.
 - **`DecisionsDrawer.tsx`**: Línea de tiempo cronológica de ADRs con filtros por entidad.

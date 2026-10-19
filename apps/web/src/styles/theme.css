@@ -205,3 +205,13 @@ input:focus, select:focus, textarea:focus {
 .react-flow__attribution a:hover {
   color: var(--accent) !important;
 }
+
+.schema-handle {
+  opacity: 0.35 !important;
+  transition: opacity 0.15s ease, box-shadow 0.15s ease !important;
+}
+
+.react-flow__node:hover .schema-handle,
+.react-flow__node.selected .schema-handle {
+  opacity: 1 !important;
+}
