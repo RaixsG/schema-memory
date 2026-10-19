@@ -24,6 +24,8 @@ function hasGlobalSetup(home = homedir()): boolean {
   const candidates = [
     resolve(home, '.config', 'opencode', 'opencode.json'),
     resolve(home, '.gemini', 'config', 'mcp_config.json'),
+    resolve(home, '.gemini', 'config', 'plugins', 'schema-memory', 'plugin.json'),
+    resolve(home, '.agents', 'skills', 'schema-memory', 'SKILL.md'),
   ];
   for (const file of candidates) {
     try {
@@ -84,7 +86,7 @@ async function offerFirstRunSetup(): Promise<void> {
     isSetupActive = true;
     try {
       const { setupCommand } = await import('./commands/setup.js');
-      await setupCommand({ target: 'all' });
+      await setupCommand({});
     } finally {
       isSetupActive = false;
     }
@@ -268,9 +270,21 @@ program
 
 program
   .command('setup')
-  .description('Configure global MCP, skills and rules for OpenCode, Antigravity & standard agents')
-  .option('-t, --target <target>', 'Target environment: all | opencode | antigravity | agents (default: all)', 'all')
-  .option('--print', 'Print configuration without installing')
+  .description('Configure only the agents you use: OpenCode, Antigravity, Antigravity CLI or standard skills')
+  .option(
+    '-t, --target <targets>',
+    'Comma-separated targets: all | opencode | antigravity | antigravity-cli | agents'
+  )
+  .option(
+    '-p, --profile <profile>',
+    'Install profile: minimal | recommended | strict (default: recommended)'
+  )
+  .option('--print', 'Print the selected configuration without installing')
+  .option('--yes', 'Skip confirmation prompts (useful for automation)')
+  .option(
+    '--refresh-projects',
+    'Refresh the schema-memory AGENTS.md block in every registered project'
+  )
   .option('--cli-only', 'Only link the global "sm" and "schema-memory" CLI commands in ~/.local/bin')
   .option('--install-global', 'Install "sm" globally via package manager (npm / bun / pnpm)')
   .option('--no-install-global', 'Skip installing "sm" globally via package manager')

@@ -41,7 +41,7 @@ flowchart TD
 
     subgraph Agents["Capa de Agentes IA (packages/mcp)"]
         StdioMCP["Servidor MCP (stdio)<br/>@modelcontextprotocol/sdk"]
-        Tools12["12 Herramientas MCP<br/>get_schema, draft_adr, confirm_change..."]
+        Tools12["12 Herramientas + 3 Prompts<br/>get_schema, draft_adr, check_drift..."]
     end
 
     subgraph CLI["Capa de Comandos (packages/cli)"]
@@ -115,6 +115,11 @@ Punto de entrada empaquetado para distribución en npm:
   - Sonda de salud HTTP contra `/healthz` y fallback automático de puertos (reintenta puertos 4317 a 4327 en caso de `EADDRINUSE`).
 - **Auto-Build Inteligente (`scripts/ensure-build.mjs`)**:
   - Guardián en scripts de desarrollo (`pnpm ui`, `pnpm start`, `pnpm doctor`, etc.) que compara el `mtime` de los paquetes fuente contra `packages/cli/dist/index.js` y auto-compila en ~300ms solo cuando detecta cambios.
+- **Setup selectivo por target y perfil (`src/commands/setup.ts` + `setup-config.ts`)**:
+  - Targets independientes: `opencode`, `antigravity` (App/IDE), `antigravity-cli` y `agents`.
+  - Perfiles `minimal`, `recommended` y `strict` que resuelven qué componentes escribe cada target.
+  - Wizard interactivo con detección de agentes instalados; flags `--target`, `--profile`, `--print`, `--yes` y `--refresh-projects` para automatización.
+  - Aislamiento de escrituras: un target nunca modifica rutas de otro. El plugin de Antigravity se genera con el manifest oficial (`$schema`, `name`, `description`) y la CLI se importa con `agy plugin install`.
 - **Detección interactiva de primera ejecución** para ofrecer `sm setup` si los agentes no están configurados.
 
 ### 3.5 `apps/web` (`apps/web/`)

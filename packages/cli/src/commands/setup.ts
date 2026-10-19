@@ -23,12 +23,23 @@ import {
   type EphemeralRunner,
   getPlatform,
 } from '../platform/index.js';
+import { writeSetupState } from '../setup-state.js';
 import {
-  readSetupState,
-  writeSetupState,
-} from '../setup-state.js';
+  SETUP_TARGETS,
+  SETUP_TARGET_LABELS,
+  SCHEMA_MEMORY_RULES_CONTENT,
+  SCHEMA_MEMORY_SKILL_CONTENT,
+  buildAntigravityPluginManifest,
+  detectSetupTargets,
+  hasComponent,
+  parseSetupTargets,
+  parseTargetSelection,
+  resolveSetupProfile,
+  type SetupProfile,
+  type SetupTarget,
+} from './setup-config.js';
 
-export type SetupTarget = 'all' | 'opencode' | 'antigravity' | 'agents';
+export type { SetupProfile, SetupTarget } from './setup-config.js';
 
 export function resolveGlobalInstallCommand(
   runner: EphemeralRunner | null
@@ -230,12 +241,21 @@ export interface SetupCommandOptions {
   print?: boolean;
   cliOnly?: boolean;
   target?: string;
+  profile?: string;
   installGlobal?: boolean;
+  yes?: boolean;
+  refreshProjects?: boolean;
+  homeDir?: string;
+  interactive?: boolean;
+  cliDistPath?: string;
+  skipCliInstall?: boolean;
 }
 
 export async function setupCommand(options: SetupCommandOptions): Promise<void> {
   const currentFile = fileURLToPath(import.meta.url);
-  const cliDistPath = resolve(dirname(currentFile), '..', 'dist', 'index.js');
+  const cliDistPath =
+    options.cliDistPath ||
+    resolve(dirname(currentFile), '..', 'dist', 'index.js');
 
   if (!options.print && !existsSync(cliDistPath)) {
     throw new Error(
@@ -266,69 +286,14 @@ export async function setupCommand(options: SetupCommandOptions): Promise<void> 
     return;
   }
 
-  const target = ((options.target || 'all').toLowerCase() as SetupTarget);
-  if (!['all', 'opencode', 'antigravity', 'agents'].includes(target)) {
-    throw new Error(
-      `Invalid target "${options.target}". Valid targets: all, opencode, antigravity, agents`
-    );
-  }
-
-  const skillContent = `---
-name: schema-memory
-description: Workflow rules for inspecting database schemas, debating pending changes, creating ADRs, and maintaining memory in Engram.
----
-
-# schema-memory AI Workflow
-
-Always follow these 8 steps when touching database schemas in any registered client project:
-
-1. **Inspect Existing Context**: Call \`get_decisions\` and \`get_schema\` first (always pass the \`project\` ID or path).
-2. **Detect Pending Changes**: Call \`get_pending_changes\` to see what was edited in the UI.
-3. **Engage in Targeted Debate**: Interrogate the user about the "why", trade-offs, and discarded alternatives. Ask one focused question at a time.
-4. **Draft the ADR**: Call \`draft_adr\` with structured context, decision, alternatives, and consequences.
-5. **Request Explicit Approval**: Present the summary to the user and ask for explicit confirmation.
-6. **Confirm the Change**: Call \`confirm_change(userConfirmed=true)\`.
-7. **Persist to Engram**: Save the returned \`engramSummary\` into Engram using your Engram tool.
-8. **Update Code / Migrations**: ONLY now proceed to update ORM models or database migration files.
-
-## Strict Isolation Guardrails
-- **Use ONLY MCP tools**: Interact with \`schema-memory\` exclusively through its MCP tools (\`schema-memory\` / \`schema-memory-mcp\`).
-- **NEVER inspect the schema-memory repository**: When working on a client project, NEVER search for, read, or analyze the \`schema-memory\` tool's own source code repository. Inspect only the client project's files.
-- **Fail-fast if MCP is missing**: If the MCP tools (\`get_schema\`, \`import_schema\`, \`get_pending_changes\`, etc.) are not available in your active session, STOP immediately without searching the filesystem and ask the user to run \`sm setup\` (or \`npx schema-memory setup\` / \`bunx schema-memory setup\`) and reload the agent session.
-`;
-
-  const rulesContent = `# schema-memory Global Rule
-When working on a repository that contains \`.schema-memory/\` or references \`schema-memory\` in \`AGENTS.md\`:
-1. Call \`get_decisions\` and \`get_schema\` (passing \`project\`) before making or proposing any database schema change.
-2. Never write schema changes directly to code without recording decisions via \`confirm_change(userConfirmed=true)\`.
-3. **Strict Isolation**: Interact with \`schema-memory\` ONLY via its MCP tools (\`schema-memory\` / \`schema-memory-mcp\`). NEVER search for or read the \`schema-memory\` source code repository. If the MCP tools are not loaded in your current session, stop immediately and ask the user to run \`sm setup\` (or \`npx schema-memory setup\` / \`bunx schema-memory setup\`) and reload the agent.
-`;
-
-  const pluginManifest = {
-    name: 'schema-memory',
-    displayName: 'Schema Memory',
-    description:
-      'Live database schema memory, ADR workflow and AI pair programming companion.',
-    suggestedPrompts: [
-      'Check current database schema and decisions',
-      'Review pending schema changes and draft ADR',
-      'Check for database schema drift against codebase',
-    ],
-  };
+  const home = options.homeDir || homedir();
+  const { targets, profile } = await resolveSetupSelection(options, home);
 
   if (options.print) {
-    console.log('=== 1. OpenCode Global Config (~/.config/opencode/opencode.json) ===');
-    console.log(mergeOpenCodeConfig(null, cliDistPath).trim());
-    console.log('\n=== 2. Antigravity Global MCP (~/.gemini/config/mcp_config.json) ===');
-    console.log(mergeAntigravityMcpConfig(null, cliDistPath).trim());
-    console.log('\n=== 3. Standard Agent Skill (~/.agents/skills/schema-memory/SKILL.md) ===');
-    console.log(skillContent.trim());
-    console.log('\n=== 4. Global Rule (~/.config/opencode/AGENTS.md & ~/.gemini/config/GEMINI.md) ===');
-    console.log(mergeGlobalAgentsMd(null, rulesContent).trim());
+    printSetupConfigs(targets, profile, cliDistPath);
     return;
   }
 
-  const home = homedir();
   const installedTargets: string[] = [];
   const warnings: string[] = [];
   const ephemeralRunner = detectEphemeralRunner(cliDistPath);
@@ -341,211 +306,178 @@ When working on a repository that contains \`.schema-memory/\` or references \`s
     );
   }
 
-  // 1. Standard Agent Skills (~/.agents/skills/schema-memory/SKILL.md)
-  if (target === 'all' || target === 'agents' || target === 'opencode') {
-    const stdSkillDir = resolve(home, '.agents', 'skills', 'schema-memory');
-    await ensureDir(stdSkillDir);
-    await atomicWrite(resolve(stdSkillDir, 'SKILL.md'), skillContent);
-    installedTargets.push(`Standard Agent Skill: ${stdSkillDir}/SKILL.md`);
-  }
+  console.log(
+    `\n🧭 Configuring: ${targets.map((target) => SETUP_TARGET_LABELS[target]).join(', ')}`
+  );
+  console.log(`   Profile: ${profile}`);
 
-  // 2. OpenCode Global (~/.config/opencode/)
-  if (target === 'all' || target === 'opencode') {
-    const openCodeDir = resolve(home, '.config', 'opencode');
-    const openCodeSkillDir = resolve(openCodeDir, 'skills', 'schema-memory');
-    await ensureDir(openCodeDir);
-    await ensureDir(openCodeSkillDir);
-
-    const openCodeJsonPath = resolve(openCodeDir, 'opencode.json');
-    const existingOpenCodeJson = await readIfExists(openCodeJsonPath);
-    const mergedOpenCodeJson = mergeOpenCodeConfig(
-      existingOpenCodeJson,
-      cliDistPath
-    );
-    await atomicWrite(openCodeJsonPath, mergedOpenCodeJson);
-
-    const openCodeAgentsPath = resolve(openCodeDir, 'AGENTS.md');
-    const existingAgentsMd = await readIfExists(openCodeAgentsPath);
-    const mergedAgentsMd = mergeGlobalAgentsMd(existingAgentsMd, rulesContent);
-    await atomicWrite(openCodeAgentsPath, mergedAgentsMd);
-
-    await atomicWrite(resolve(openCodeSkillDir, 'SKILL.md'), skillContent);
-    installedTargets.push(
-      `OpenCode Global Config: ${openCodeDir} (opencode.json, AGENTS.md, skills/)`
-    );
-  }
-
-  // 3. Antigravity Direct Global MCP + Plugin (~/.gemini/config/)
-  if (target === 'all' || target === 'antigravity') {
-    const geminiConfigDir = resolve(home, '.gemini', 'config');
-    await ensureDir(geminiConfigDir);
-
-    // 3a. Direct Global MCP in ~/.gemini/config/mcp_config.json (active immediately without plugin enablement)
-    const agyDirectMcpPath = resolve(geminiConfigDir, 'mcp_config.json');
-    const existingAgyMcp = await readIfExists(agyDirectMcpPath);
-    const mergedAgyMcp = mergeAntigravityMcpConfig(existingAgyMcp, cliDistPath);
-    await atomicWrite(agyDirectMcpPath, mergedAgyMcp);
-
-    // 3b. Direct Global Rule in ~/.gemini/config/GEMINI.md
-    const geminiMdPath = resolve(geminiConfigDir, 'GEMINI.md');
-    const existingGeminiMd = await readIfExists(geminiMdPath);
-    const mergedGeminiMd = mergeGlobalAgentsMd(existingGeminiMd, rulesContent);
-    await atomicWrite(geminiMdPath, mergedGeminiMd);
-
-    // 3c. Antigravity Plugin bundle in ~/.gemini/config/plugins/schema-memory/
-    const agyPluginDir = resolve(geminiConfigDir, 'plugins', 'schema-memory');
-    await ensureDir(agyPluginDir);
-    await ensureDir(resolve(agyPluginDir, 'skills', 'schema-memory'));
-    await ensureDir(resolve(agyPluginDir, 'rules'));
-
-    await atomicWrite(
-      resolve(agyPluginDir, 'plugin.json'),
-      JSON.stringify(pluginManifest, null, 2) + '\n'
-    );
-    await atomicWrite(
-      resolve(agyPluginDir, 'mcp_config.json'),
-      mergeAntigravityMcpConfig(null, cliDistPath)
-    );
-    await atomicWrite(
-      resolve(agyPluginDir, 'skills', 'schema-memory', 'SKILL.md'),
-      skillContent
-    );
-    await atomicWrite(resolve(agyPluginDir, 'rules', 'AGENTS.md'), rulesContent);
-    installedTargets.push(
-      `Antigravity Direct MCP & Rules: ${agyDirectMcpPath} + ${geminiMdPath}`
-    );
-    installedTargets.push(`Antigravity Plugin Bundle: ${agyPluginDir}`);
-  }
-
-  // 4. Global CLI binary
-  const binDir = getBinDir();
-  const smOnPath = findCommandOnPath('sm') ?? findCommandOnPath('schema-memory');
-  const isExternalGlobal = smOnPath && !isWithinDir(smOnPath, binDir);
-
-  if (isExternalGlobal) {
-    installedTargets.push(`Global CLI: already available on PATH (${smOnPath})`);
-  } else if (smOnPath && isWithinDir(smOnPath, binDir)) {
-    try {
-      const link = await linkCliBinary(cliDistPath);
-      installedTargets.push(`Global CLI: refreshed in ${link.binDir}`);
-    } catch (error: any) {
-      warnings.push(`Could not refresh global CLI shims: ${error.message}`);
+  for (const target of targets) {
+    if (target === 'agents') {
+      installedTargets.push(...(await installAgentSkills(home)));
+      continue;
     }
-  } else if (options.installGlobal === false) {
-    if (!ephemeralRunner) {
+
+    if (target === 'opencode') {
+      installedTargets.push(...(await installOpenCode(home, cliDistPath, profile)));
+      continue;
+    }
+
+    if (target === 'antigravity') {
+      const result = await installAntigravityApp(home, cliDistPath, profile, warnings);
+      installedTargets.push(...result);
+      continue;
+    }
+
+    if (target === 'antigravity-cli') {
+      const result = await installAntigravityCli(
+        home,
+        cliDistPath,
+        profile,
+        options,
+        warnings
+      );
+      installedTargets.push(...result);
+    }
+  }
+
+  if (!options.skipCliInstall) {
+    // 4. Global CLI binary
+    const binDir = getBinDir();
+    const smOnPath =
+      findCommandOnPath('sm') ?? findCommandOnPath('schema-memory');
+    const isExternalGlobal = smOnPath && !isWithinDir(smOnPath, binDir);
+
+    if (isExternalGlobal) {
+      installedTargets.push(
+        `Global CLI: already available on PATH (${smOnPath})`
+      );
+    } else if (smOnPath && isWithinDir(smOnPath, binDir)) {
       try {
         const link = await linkCliBinary(cliDistPath);
-        installedTargets.push(`Global CLI: ${link.detail}`);
-        if (link.linked && !isDirOnPath(link.binDir)) {
-          warnings.push(
-            `Add "${link.binDir}" to PATH (or run "npm i -g schema-memory" / "bun add -g schema-memory").`
-          );
-        }
+        installedTargets.push(`Global CLI: refreshed in ${link.binDir}`);
       } catch (error: any) {
-        warnings.push(`Could not link CLI (${error.message}).`);
+        warnings.push(`Could not refresh global CLI shims: ${error.message}`);
       }
-    } else {
-      warnings.push(
-        `Global CLI install skipped. Run via "${ephemeralRunner} schema-memory" or install manually.`
-      );
-    }
-  } else {
-    const installCmd = resolveGlobalInstallCommand(ephemeralRunner);
-    let shouldRun = options.installGlobal === true;
-
-    if (options.installGlobal === undefined) {
-      if (process.stdin.isTTY && process.stdout.isTTY) {
-        console.log(
-          `\n📦 The "sm" command is not yet available globally on your PATH.`
-        );
-        const rl = createInterface({ input: process.stdin, output: process.stdout });
-        const answer = await new Promise<string>((resolveAnswer) => {
-          rl.question(
-            `   Install "sm" globally via "${installCmd.command} ${installCmd.args.join(' ')}"? (Y/n) `,
-            (val) => {
-              rl.close();
-              resolveAnswer(val);
-            }
-          );
-        });
-        const normalized = answer.trim().toLowerCase();
-        shouldRun = normalized === '' || normalized === 'y' || normalized === 'yes';
-        if (!shouldRun) {
-          await writeSetupState({
-            globalInstallDeclined: true,
-            lastOfferedAt: new Date().toISOString(),
-          });
-        }
-      } else {
-        warnings.push(
-          `"sm" is not on PATH. Run "${installCmd.command} ${installCmd.args.join(' ')}" to install it globally.`
-        );
-      }
-    }
-
-    if (shouldRun) {
-      console.log(`\n⚙️  Running: ${installCmd.command} ${installCmd.args.join(' ')}...`);
-      const res = runGlobalInstall(installCmd.command, installCmd.args);
-      if (res.success) {
-        installedTargets.push(
-          `Global CLI: installed via "${installCmd.command} ${installCmd.args.join(' ')}"`
-        );
-        await writeSetupState({
-          lastInstalledMethod: `${installCmd.command} ${installCmd.args.join(' ')}`,
-        });
-      } else {
-        warnings.push(
-          `Global install via ${installCmd.command} failed (${res.detail || 'unknown error'}). Falling back to local bin link.`
-        );
+    } else if (options.installGlobal === false) {
+      if (!ephemeralRunner) {
         try {
           const link = await linkCliBinary(cliDistPath);
           installedTargets.push(`Global CLI: ${link.detail}`);
           if (link.linked && !isDirOnPath(link.binDir)) {
-            printPathHint(link.binDir);
+            warnings.push(
+              `Add "${link.binDir}" to PATH (or run "npm i -g schema-memory" / "bun add -g schema-memory").`
+            );
           }
-        } catch (linkError: any) {
-          warnings.push(`Could not link CLI binary: ${linkError.message}`);
+        } catch (error: any) {
+          warnings.push(`Could not link CLI (${error.message}).`);
         }
+      } else {
+        warnings.push(
+          `Global CLI install skipped. Run via "${ephemeralRunner} schema-memory" or install manually.`
+        );
       }
-    } else if (!ephemeralRunner) {
-      try {
-        const link = await linkCliBinary(cliDistPath);
-        installedTargets.push(`Global CLI: ${link.detail}`);
-        if (link.linked && !isDirOnPath(link.binDir)) {
+    } else {
+      const installCmd = resolveGlobalInstallCommand(ephemeralRunner);
+      let shouldRun = options.installGlobal === true;
+
+      if (options.installGlobal === undefined) {
+        if (process.stdin.isTTY && process.stdout.isTTY) {
+          console.log(
+            `\n📦 The "sm" command is not yet available globally on your PATH.`
+          );
+          const rl = createInterface({
+            input: process.stdin,
+            output: process.stdout,
+          });
+          const answer = await new Promise<string>((resolveAnswer) => {
+            rl.question(
+              `   Install "sm" globally via "${installCmd.command} ${installCmd.args.join(' ')}"? (Y/n) `,
+              (val) => {
+                rl.close();
+                resolveAnswer(val);
+              }
+            );
+          });
+          const normalized = answer.trim().toLowerCase();
+          shouldRun =
+            normalized === '' || normalized === 'y' || normalized === 'yes';
+          if (!shouldRun) {
+            await writeSetupState({
+              globalInstallDeclined: true,
+              lastOfferedAt: new Date().toISOString(),
+            });
+          }
+        } else {
           warnings.push(
-            `Add "${link.binDir}" to PATH (or run "npm i -g schema-memory").`
+            `"sm" is not on PATH. Run "${installCmd.command} ${installCmd.args.join(' ')}" to install it globally.`
           );
         }
-      } catch (linkErr: any) {
-        warnings.push(`Could not link CLI binary: ${linkErr.message}`);
+      }
+
+      if (shouldRun) {
+        console.log(
+          `\n⚙️  Running: ${installCmd.command} ${installCmd.args.join(' ')}...`
+        );
+        const res = runGlobalInstall(installCmd.command, installCmd.args);
+        if (res.success) {
+          installedTargets.push(
+            `Global CLI: installed via "${installCmd.command} ${installCmd.args.join(' ')}"`
+          );
+          await writeSetupState({
+            lastInstalledMethod: `${installCmd.command} ${installCmd.args.join(' ')}`,
+          });
+        } else {
+          warnings.push(
+            `Global install via ${installCmd.command} failed (${res.detail || 'unknown error'}). Falling back to local bin link.`
+          );
+          try {
+            const link = await linkCliBinary(cliDistPath);
+            installedTargets.push(`Global CLI: ${link.detail}`);
+            if (link.linked && !isDirOnPath(link.binDir)) {
+              printPathHint(link.binDir);
+            }
+          } catch (linkError: any) {
+            warnings.push(`Could not link CLI binary: ${linkError.message}`);
+          }
+        }
+      } else if (!ephemeralRunner) {
+        try {
+          const link = await linkCliBinary(cliDistPath);
+          installedTargets.push(`Global CLI: ${link.detail}`);
+          if (link.linked && !isDirOnPath(link.binDir)) {
+            warnings.push(
+              `Add "${link.binDir}" to PATH (or run "npm i -g schema-memory").`
+            );
+          }
+        } catch (linkErr: any) {
+          warnings.push(`Could not link CLI binary: ${linkErr.message}`);
+        }
       }
     }
   }
 
-  // 5. Refresh AGENTS.md managed block in already-registered client projects
-  const projects = await listProjects();
-  let refreshedCount = 0;
-  for (const proj of projects) {
-    if (existsSync(proj.path)) {
-      const agentsPath = resolve(proj.path, 'AGENTS.md');
-      const existing = await readIfExists(agentsPath);
-      const { content } = updateAgentsMdContent(existing, proj.id);
-      await atomicWrite(agentsPath, content);
-      refreshedCount++;
+  if (options.refreshProjects) {
+    const refreshedCount = await refreshRegisteredProjects();
+    if (refreshedCount > 0) {
+      installedTargets.push(
+        `Refreshed AGENTS.md guardrails in ${refreshedCount} registered project(s)`
+      );
     }
-  }
-  if (refreshedCount > 0) {
-    installedTargets.push(
-      `Refreshed AGENTS.md guardrails in ${refreshedCount} registered project(s)`
-    );
   }
 
   await writeSetupState({
     completedAt: new Date().toISOString(),
     interrupted: false,
+    targets,
+    profile,
   });
 
-  console.log('\n✅ Global setup complete:');
+  console.log(
+    `\n✅ Setup complete for: ${targets
+      .map((target) => SETUP_TARGET_LABELS[target])
+      .join(', ')}`
+  );
+  console.log(`   Profile: ${profile}`);
   for (const item of installedTargets) {
     console.log(`   • ${item}`);
   }
@@ -560,5 +492,356 @@ When working on a repository that contains \`.schema-memory/\` or references \`s
   console.log(
     '\n💡 Tip: Run "sm doctor" (or "npx schema-memory doctor" / "bunx schema-memory doctor") anytime to verify your installation.\n'
   );
+}
+
+async function resolveSetupSelection(
+  options: SetupCommandOptions,
+  home: string
+): Promise<{ targets: SetupTarget[]; profile: SetupProfile }> {
+  const hasExplicitTarget =
+    typeof options.target === 'string' && options.target.trim() !== '';
+  const targets = hasExplicitTarget
+    ? parseSetupTargets(options.target)
+    : [...SETUP_TARGETS];
+  const profile = resolveSetupProfile(options.profile);
+
+  const canPrompt =
+    options.interactive !== false &&
+    !hasExplicitTarget &&
+    !options.print &&
+    !options.cliOnly &&
+    !options.yes &&
+    process.stdin.isTTY &&
+    process.stdout.isTTY;
+
+  if (!canPrompt) {
+    return { targets, profile };
+  }
+
+  return promptSetupSelection(home);
+}
+
+async function promptSetupSelection(
+  home: string
+): Promise<{ targets: SetupTarget[]; profile: SetupProfile }> {
+  const detected = detectSetupTargets(home);
+
+  console.log('\n🧭 schema-memory setup');
+  console.log('   Choose only the agents you use; unselected agents are left untouched.\n');
+  detected.forEach((item, index) => {
+    const marker = item.detected ? 'x' : ' ';
+    const suffix = item.detected ? ' (detected)' : '';
+    console.log(`   ${index + 1}. [${marker}] ${item.label}${suffix}`);
+  });
+
+  const targetAnswer = await askQuestion(
+    '   Select targets (comma-separated numbers/names, "all", or Enter for detected): '
+  );
+  const targets = parseTargetSelection(targetAnswer, detected);
+  if (targets.length === 0) {
+    throw new Error('Select at least one setup target.');
+  }
+
+  console.log('\n   Profiles:');
+  console.log('     1. minimal     - MCP only');
+  console.log('     2. recommended - MCP + workflow skill (default)');
+  console.log('     3. strict      - MCP + skill + guardrail rules');
+  const profileAnswer = await askQuestion('   Choose profile [1-3] (2): ');
+
+  return {
+    targets,
+    profile: resolveProfileAnswer(profileAnswer),
+  };
+}
+
+function resolveProfileAnswer(answer: string): SetupProfile {
+  const normalized = answer.trim().toLowerCase();
+  if (normalized === '1') return 'minimal';
+  if (normalized === '2' || normalized === '') return 'recommended';
+  if (normalized === '3') return 'strict';
+  return resolveSetupProfile(normalized);
+}
+
+async function askQuestion(question: string): Promise<string> {
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  return new Promise<string>((resolveAnswer) => {
+    rl.question(question, (value) => {
+      rl.close();
+      resolveAnswer(value);
+    });
+  });
+}
+
+async function confirmQuestion(question: string): Promise<boolean> {
+  if (!process.stdin.isTTY || !process.stdout.isTTY) {
+    return false;
+  }
+  const answer = await askQuestion(question);
+  const normalized = answer.trim().toLowerCase();
+  return normalized === '' || normalized === 'y' || normalized === 'yes';
+}
+
+async function installAgentSkills(home: string): Promise<string[]> {
+  const skillDir = resolve(home, '.agents', 'skills', 'schema-memory');
+  await ensureDir(skillDir);
+  await atomicWrite(
+    resolve(skillDir, 'SKILL.md'),
+    SCHEMA_MEMORY_SKILL_CONTENT
+  );
+  return [`Standard Agent Skill: ${skillDir}/SKILL.md`];
+}
+
+async function installOpenCode(
+  home: string,
+  cliDistPath: string,
+  profile: SetupProfile
+): Promise<string[]> {
+  const openCodeDir = resolve(home, '.config', 'opencode');
+  await ensureDir(openCodeDir);
+
+  const openCodeJsonPath = resolve(openCodeDir, 'opencode.json');
+  const existingOpenCodeJson = await readIfExists(openCodeJsonPath);
+  await atomicWrite(
+    openCodeJsonPath,
+    mergeOpenCodeConfig(existingOpenCodeJson, cliDistPath)
+  );
+
+  const installed = [`OpenCode MCP: ${openCodeJsonPath}`];
+
+  if (hasComponent('opencode', profile, 'skill')) {
+    const skillDir = resolve(openCodeDir, 'skills', 'schema-memory');
+    await ensureDir(skillDir);
+    await atomicWrite(
+      resolve(skillDir, 'SKILL.md'),
+      SCHEMA_MEMORY_SKILL_CONTENT
+    );
+    installed.push(`OpenCode Skill: ${skillDir}/SKILL.md`);
+  }
+
+  if (hasComponent('opencode', profile, 'rules')) {
+    const agentsPath = resolve(openCodeDir, 'AGENTS.md');
+    const existingAgentsMd = await readIfExists(agentsPath);
+    await atomicWrite(
+      agentsPath,
+      mergeGlobalAgentsMd(existingAgentsMd, SCHEMA_MEMORY_RULES_CONTENT)
+    );
+    installed.push(`OpenCode Rules: ${agentsPath}`);
+  }
+
+  return installed;
+}
+
+async function writeAntigravityPluginBundle(
+  pluginDir: string,
+  cliDistPath: string,
+  profile: SetupProfile
+): Promise<void> {
+  await ensureDir(pluginDir);
+
+  await atomicWrite(
+    resolve(pluginDir, 'plugin.json'),
+    JSON.stringify(buildAntigravityPluginManifest(), null, 2) + '\n'
+  );
+  await atomicWrite(
+    resolve(pluginDir, 'mcp_config.json'),
+    mergeAntigravityMcpConfig(null, cliDistPath)
+  );
+
+  if (profile !== 'minimal') {
+    const skillDir = resolve(pluginDir, 'skills', 'schema-memory');
+    await ensureDir(skillDir);
+    await atomicWrite(
+      resolve(skillDir, 'SKILL.md'),
+      SCHEMA_MEMORY_SKILL_CONTENT
+    );
+  }
+
+  if (profile === 'strict') {
+    const rulesDir = resolve(pluginDir, 'rules');
+    await ensureDir(rulesDir);
+    await atomicWrite(
+      resolve(rulesDir, 'AGENTS.md'),
+      SCHEMA_MEMORY_RULES_CONTENT
+    );
+  }
+}
+
+async function installAntigravityApp(
+  home: string,
+  cliDistPath: string,
+  profile: SetupProfile,
+  warnings: string[]
+): Promise<string[]> {
+  const geminiConfigDir = resolve(home, '.gemini', 'config');
+  await ensureDir(geminiConfigDir);
+
+  if (profile === 'minimal') {
+    const mcpPath = resolve(geminiConfigDir, 'mcp_config.json');
+    const existing = await readIfExists(mcpPath);
+    await atomicWrite(
+      mcpPath,
+      mergeAntigravityMcpConfig(existing, cliDistPath)
+    );
+    return [`Antigravity MCP: ${mcpPath}`];
+  }
+
+  const pluginDir = resolve(geminiConfigDir, 'plugins', 'schema-memory');
+  await writeAntigravityPluginBundle(pluginDir, cliDistPath, profile);
+
+  const legacyMcpPath = resolve(geminiConfigDir, 'mcp_config.json');
+  if (existsSync(legacyMcpPath)) {
+    warnings.push(
+      `Existing Antigravity global MCP config was left untouched: ${legacyMcpPath}. ` +
+        'The plugin bundle already includes its own MCP server; remove the duplicate entry if your client lists the tools twice.'
+    );
+  }
+
+  return [`Antigravity Plugin Bundle: ${pluginDir}`];
+}
+
+async function installAntigravityCli(
+  home: string,
+  cliDistPath: string,
+  profile: SetupProfile,
+  options: SetupCommandOptions,
+  warnings: string[]
+): Promise<string[]> {
+  const geminiConfigDir = resolve(home, '.gemini', 'config');
+
+  if (profile === 'minimal') {
+    await ensureDir(geminiConfigDir);
+    const mcpPath = resolve(geminiConfigDir, 'mcp_config.json');
+    const existing = await readIfExists(mcpPath);
+    await atomicWrite(
+      mcpPath,
+      mergeAntigravityMcpConfig(existing, cliDistPath)
+    );
+    return [`Antigravity CLI MCP: ${mcpPath}`];
+  }
+
+  const pluginDir = resolve(
+    home,
+    '.schema-memory',
+    'plugins',
+    'antigravity',
+    'schema-memory'
+  );
+  await writeAntigravityPluginBundle(pluginDir, cliDistPath, profile);
+
+  const installed = [`Antigravity CLI Plugin Staging: ${pluginDir}`];
+  const agy = findCommandOnPath('agy');
+  if (!agy) {
+    warnings.push(
+      `Antigravity CLI was not found. Import the plugin manually with: agy plugin install "${pluginDir}"`
+    );
+    return installed;
+  }
+
+  const shouldImport =
+    options.yes === true ||
+    (await confirmQuestion(
+      '   Import the plugin into Antigravity CLI now? (Y/n) '
+    ));
+
+  if (!shouldImport) {
+    warnings.push(
+      `Plugin not imported. Run: agy plugin install "${pluginDir}"`
+    );
+    return installed;
+  }
+
+  const result = spawnSync('agy', ['plugin', 'install', pluginDir], {
+    stdio: 'inherit',
+  });
+  if (result.error || result.status !== 0) {
+    warnings.push(
+      `agy plugin install failed${result.error ? `: ${result.error.message}` : ''}. ` +
+        `Run manually: agy plugin install "${pluginDir}"`
+    );
+    return installed;
+  }
+
+  installed.push('Antigravity CLI Plugin: imported with agy plugin install');
+  return installed;
+}
+
+async function refreshRegisteredProjects(): Promise<number> {
+  const projects = await listProjects();
+  let refreshedCount = 0;
+  for (const proj of projects) {
+    if (existsSync(proj.path)) {
+      const agentsPath = resolve(proj.path, 'AGENTS.md');
+      const existing = await readIfExists(agentsPath);
+      const { content } = updateAgentsMdContent(existing, proj.id);
+      await atomicWrite(agentsPath, content);
+      refreshedCount++;
+    }
+  }
+  return refreshedCount;
+}
+
+function printSetupConfigs(
+  targets: SetupTarget[],
+  profile: SetupProfile,
+  cliDistPath: string
+): void {
+  for (const target of targets) {
+    if (target === 'opencode') {
+      console.log('\n=== OpenCode: ~/.config/opencode/opencode.json ===');
+      console.log(mergeOpenCodeConfig(null, cliDistPath).trim());
+      if (hasComponent('opencode', profile, 'skill')) {
+        console.log('\n=== OpenCode: ~/.config/opencode/skills/schema-memory/SKILL.md ===');
+        console.log(SCHEMA_MEMORY_SKILL_CONTENT.trim());
+      }
+      if (hasComponent('opencode', profile, 'rules')) {
+        console.log('\n=== OpenCode: ~/.config/opencode/AGENTS.md ===');
+        console.log(
+          mergeGlobalAgentsMd(null, SCHEMA_MEMORY_RULES_CONTENT).trim()
+        );
+      }
+      continue;
+    }
+
+    if (target === 'agents') {
+      console.log('\n=== Standard Agent Skill: ~/.agents/skills/schema-memory/SKILL.md ===');
+      console.log(SCHEMA_MEMORY_SKILL_CONTENT.trim());
+      continue;
+    }
+
+    const label =
+      target === 'antigravity' ? 'Antigravity App/IDE' : 'Antigravity CLI';
+    console.log(`\n=== ${label} ===`);
+
+    if (profile === 'minimal') {
+      console.log('~/.gemini/config/mcp_config.json');
+      console.log(mergeAntigravityMcpConfig(null, cliDistPath).trim());
+      if (target === 'antigravity-cli') {
+        console.log(
+          '\nNo plugin import is needed for the minimal profile; the CLI reads the global MCP config.'
+        );
+      }
+      continue;
+    }
+
+    const pluginPath =
+      target === 'antigravity'
+        ? '~/.gemini/config/plugins/schema-memory/'
+        : '~/.schema-memory/plugins/antigravity/schema-memory/';
+    console.log(`Plugin bundle: ${pluginPath}`);
+    console.log('plugin.json');
+    console.log(JSON.stringify(buildAntigravityPluginManifest(), null, 2));
+    console.log('mcp_config.json');
+    console.log(mergeAntigravityMcpConfig(null, cliDistPath).trim());
+    console.log('skills/schema-memory/SKILL.md');
+    console.log(SCHEMA_MEMORY_SKILL_CONTENT.trim());
+    if (profile === 'strict') {
+      console.log('rules/AGENTS.md');
+      console.log(SCHEMA_MEMORY_RULES_CONTENT.trim());
+    }
+    if (target === 'antigravity-cli') {
+      console.log('\nImport command:');
+      console.log(`agy plugin install "${pluginPath}"`);
+    }
+  }
 }
 

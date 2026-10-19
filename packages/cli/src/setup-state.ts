@@ -6,12 +6,16 @@ import {
   ensureDir,
 } from '@schema-memory/core';
 
+import type { SetupProfile, SetupTarget } from './commands/setup-config.js';
+
 export interface SetupState {
   lastOfferedAt?: string;
   globalInstallDeclined?: boolean;
   completedAt?: string;
   interrupted?: boolean;
   lastInstalledMethod?: string;
+  targets?: SetupTarget[];
+  profile?: SetupProfile;
 }
 
 export function getSetupStatePath(registryDir = getRegistryDir()): string {

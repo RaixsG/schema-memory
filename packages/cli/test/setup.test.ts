@@ -1,13 +1,15 @@
-import { describe, it, expect } from 'vitest';
-import { mkdtemp, rm, writeFile, mkdir } from 'node:fs/promises';
+import { describe, it, expect, afterEach } from 'vitest';
+import { mkdtemp, rm, writeFile, mkdir, readFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import {
   mergeOpenCodeConfig,
   mergeAntigravityMcpConfig,
   mergeGlobalAgentsMd,
   resolveGlobalInstallCommand,
   runGlobalInstall,
+  setupCommand,
 } from '../src/commands/setup.js';
 import { runDoctorChecks } from '../src/commands/doctor.js';
 import {
@@ -343,6 +345,218 @@ describe('Universal Setup Helpers (OpenCode, Antigravity & Doctor)', () => {
       expect(setupCheck).toBeDefined();
       expect(setupCheck?.ok).toBe(false);
       expect(setupCheck?.detail).toContain('cancelled or interrupted');
+    } finally {
+      await rm(fakeHome, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('Selective setup installation', () => {
+  const originalHome = process.env.SCHEMA_MEMORY_HOME;
+
+  afterEach(() => {
+    if (originalHome === undefined) {
+      delete process.env.SCHEMA_MEMORY_HOME;
+    } else {
+      process.env.SCHEMA_MEMORY_HOME = originalHome;
+    }
+  });
+
+  async function createFakeHome(): Promise<{
+    fakeHome: string;
+    fakeDist: string;
+  }> {
+    const fakeHome = await mkdtemp(join(tmpdir(), 'sm-setup-'));
+    const fakeDist = resolve(fakeHome, 'cli', 'dist', 'index.js');
+    await mkdir(dirname(fakeDist), { recursive: true });
+    await writeFile(fakeDist, '// compiled cli\n', 'utf-8');
+    process.env.SCHEMA_MEMORY_HOME = resolve(fakeHome, '.schema-memory');
+    return { fakeHome, fakeDist };
+  }
+
+  it('writes only OpenCode files for the opencode target', async () => {
+    const { fakeHome, fakeDist } = await createFakeHome();
+    try {
+      await setupCommand({
+        target: 'opencode',
+        profile: 'strict',
+        homeDir: fakeHome,
+        cliDistPath: fakeDist,
+        skipCliInstall: true,
+      });
+
+      expect(
+        existsSync(resolve(fakeHome, '.config', 'opencode', 'opencode.json'))
+      ).toBe(true);
+      expect(
+        existsSync(
+          resolve(
+            fakeHome,
+            '.config',
+            'opencode',
+            'skills',
+            'schema-memory',
+            'SKILL.md'
+          )
+        )
+      ).toBe(true);
+      expect(
+        existsSync(resolve(fakeHome, '.config', 'opencode', 'AGENTS.md'))
+      ).toBe(true);
+
+      expect(existsSync(resolve(fakeHome, '.agents'))).toBe(false);
+      expect(existsSync(resolve(fakeHome, '.gemini'))).toBe(false);
+    } finally {
+      await rm(fakeHome, { recursive: true, force: true });
+    }
+  });
+
+  it('writes only the Antigravity plugin bundle for the antigravity target', async () => {
+    const { fakeHome, fakeDist } = await createFakeHome();
+    try {
+      await setupCommand({
+        target: 'antigravity',
+        profile: 'recommended',
+        homeDir: fakeHome,
+        cliDistPath: fakeDist,
+        skipCliInstall: true,
+      });
+
+      const pluginDir = resolve(
+        fakeHome,
+        '.gemini',
+        'config',
+        'plugins',
+        'schema-memory'
+      );
+      const manifest = JSON.parse(
+        await readFile(resolve(pluginDir, 'plugin.json'), 'utf-8')
+      );
+      expect(manifest).toEqual({
+        $schema: 'https://antigravity.google/schemas/v1/plugin.json',
+        name: 'schema-memory',
+        description:
+          'Live database schema memory, ADR workflow and AI pair programming companion.',
+      });
+      expect(
+        existsSync(resolve(pluginDir, 'skills', 'schema-memory', 'SKILL.md'))
+      ).toBe(true);
+      expect(existsSync(resolve(pluginDir, 'rules'))).toBe(false);
+
+      expect(existsSync(resolve(fakeHome, '.config', 'opencode'))).toBe(false);
+      expect(existsSync(resolve(fakeHome, '.agents'))).toBe(false);
+      expect(
+        existsSync(resolve(fakeHome, '.gemini', 'config', 'mcp_config.json'))
+      ).toBe(false);
+    } finally {
+      await rm(fakeHome, { recursive: true, force: true });
+    }
+  });
+
+  it('uses the global MCP config for Antigravity CLI in minimal mode', async () => {
+    const { fakeHome, fakeDist } = await createFakeHome();
+    try {
+      await setupCommand({
+        target: 'antigravity-cli',
+        profile: 'minimal',
+        homeDir: fakeHome,
+        cliDistPath: fakeDist,
+        skipCliInstall: true,
+      });
+
+      expect(
+        existsSync(resolve(fakeHome, '.gemini', 'config', 'mcp_config.json'))
+      ).toBe(true);
+      expect(
+        existsSync(
+          resolve(
+            fakeHome,
+            '.gemini',
+            'config',
+            'plugins',
+            'schema-memory'
+          )
+        )
+      ).toBe(false);
+      expect(existsSync(resolve(fakeHome, '.schema-memory', 'plugins'))).toBe(
+        false
+      );
+    } finally {
+      await rm(fakeHome, { recursive: true, force: true });
+    }
+  });
+
+  it('writes only the standard skill for the agents target', async () => {
+    const { fakeHome, fakeDist } = await createFakeHome();
+    try {
+      await setupCommand({
+        target: 'agents',
+        homeDir: fakeHome,
+        cliDistPath: fakeDist,
+        skipCliInstall: true,
+      });
+
+      expect(
+        existsSync(
+          resolve(
+            fakeHome,
+            '.agents',
+            'skills',
+            'schema-memory',
+            'SKILL.md'
+          )
+        )
+      ).toBe(true);
+      expect(existsSync(resolve(fakeHome, '.config', 'opencode'))).toBe(false);
+      expect(existsSync(resolve(fakeHome, '.gemini'))).toBe(false);
+    } finally {
+      await rm(fakeHome, { recursive: true, force: true });
+    }
+  });
+
+  it('doctor checks only the targets recorded in setup state', async () => {
+    const { fakeHome, fakeDist } = await createFakeHome();
+    try {
+      const ocDir = resolve(fakeHome, '.config', 'opencode');
+      const skillDir = resolve(ocDir, 'skills', 'schema-memory');
+      const binDir = resolve(fakeHome, '.local', 'bin');
+      await mkdir(skillDir, { recursive: true });
+      await mkdir(binDir, { recursive: true });
+
+      await writeFile(
+        resolve(ocDir, 'opencode.json'),
+        mergeOpenCodeConfig(null, fakeDist),
+        'utf-8'
+      );
+      await writeFile(
+        resolve(skillDir, 'SKILL.md'),
+        '# skill',
+        'utf-8'
+      );
+      const shimName = isWindows ? 'sm.cmd' : 'sm';
+      await writeFile(resolve(binDir, shimName), '@echo off\n', 'utf-8');
+
+      await writeSetupState(
+        { targets: ['opencode'], profile: 'recommended' },
+        resolve(fakeHome, '.schema-memory')
+      );
+
+      const results = await runDoctorChecks({
+        homeDir: fakeHome,
+        cwd: fakeHome,
+        cliDistPath: fakeDist,
+      });
+
+      expect(results.find((r) => r.name === 'OpenCode MCP (opencode.json)')?.ok).toBe(
+        true
+      );
+      expect(results.find((r) => r.name === 'OpenCode Skill')?.ok).toBe(true);
+      expect(
+        results.find((r) => r.name === 'Antigravity Global MCP (mcp_config.json)')
+      ).toBeUndefined();
+      expect(
+        results.find((r) => r.name === 'Universal Skill (~/.agents/skills)')
+      ).toBeUndefined();
     } finally {
       await rm(fakeHome, { recursive: true, force: true });
     }

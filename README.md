@@ -58,8 +58,14 @@ npm i -g schema-memory
 # o con Bun:
 bun add -g schema-memory
 
-# 2. Configurar agentes de IA (OpenCode, Antigravity y skills globales)
+# 2. Configurar solo los agentes que usás (wizard interactivo)
 sm setup
+
+# Alternativas no interactivas:
+sm setup --target opencode --profile recommended
+sm setup --target antigravity
+sm setup --target antigravity-cli
+sm setup --target agents
 
 # 3. Iniciar la interfaz web en segundo plano (daemon)
 sm
@@ -85,6 +91,15 @@ flowchart LR
 3. **Debate Guiado de Decisiones**: La IA analiza el diff con `get_pending_changes()` y debate contigo: *¿Por qué separamos esta tabla? ¿Qué trade-offs evaluamos? ¿Qué alternativas descartamos?*.
 4. **Confirmación Atómica**: Al aprobar la decisión en el chat, la IA ejecuta `confirm_change(userConfirmed=true)`, actualizando el esquema canónico y generando el ADR inmutable en tu repositorio.
 
+### Comandos guiados
+
+- **OpenCode**: los MCP prompts se exponen automáticamente como comandos:
+  - `/schema-memory:bootstrap_project`
+  - `/schema-memory:debate_pending_change`
+  - `/schema-memory:check_drift`
+- **Antigravity**: el plugin expone el skill como `/schema-memory` (App/IDE y CLI). En la CLI, primero hay que importar el plugin con `agy plugin install`.
+- **Agent Skills estándar**: `/schema-memory` solo si el host convierte skills en slash commands; de lo contrario, el agente lo descubre automáticamente.
+
 ---
 
 ## 4. Referencia de Comandos CLI
@@ -97,7 +112,7 @@ flowchart LR
 | `sm status` | `sm ls` | Muestra el estado del servidor UI (activo/PID o detenido), proyectos vinculados, cambios pendientes y ADRs. |
 | `sm add [ruta]` | `sm init` | Vincula un proyecto a `schema-memory` (detecta automáticamente proyectos existentes clonados). |
 | `sm remove [id]` | `sm rm` | Desvincula un proyecto de `schema-memory`. |
-| `sm setup` | — | Configura de forma no destructiva los servidores MCP y skills (`--target all\|opencode\|antigravity`). |
+| `sm setup` | — | Configura solo los agentes indicados mediante wizard interactivo o `--target opencode\|antigravity\|antigravity-cli\|agents`, con perfiles `minimal\|recommended\|strict`. |
 | `sm doctor` | — | Diagnóstico de salud de registro MCP, binarios en el PATH, shims y estado de proyectos. |
 | `sm mcp` | — | Inicia el servidor MCP sobre `stdio` para comunicación directa con agentes. |
 
@@ -105,10 +120,11 @@ flowchart LR
 
 ## 5. Integración con Agentes de IA
 
-`schema-memory` es agnóstico de agente e implementa el protocolo abierto **Model Context Protocol (MCP)**:
+`schema-memory` es agnóstico de agente e implementa el protocolo abierto **Model Context Protocol (MCP)**. El setup es selectivo: solo escribe la configuración de los agentes que elijas.
 
-- **OpenCode**: Configuración automática con `sm setup` en `~/.config/opencode/opencode.json` (formato V2), skills y reglas en `AGENTS.md`.
-- **Google Antigravity**: Registro automático con `sm setup` en `~/.gemini/config/mcp_config.json`, regla global en `GEMINI.md` y plugin oficial.
+- **OpenCode**: `sm setup --target opencode` registra el servidor en `~/.config/opencode/opencode.json` (formato V2) y, según el perfil, instala el skill y las reglas. Los MCP prompts se exponen automáticamente como `/schema-memory:bootstrap_project`, `/schema-memory:debate_pending_change` y `/schema-memory:check_drift`.
+- **Google Antigravity (App/IDE)**: `sm setup --target antigravity` instala el plugin bundle en `~/.gemini/config/plugins/schema-memory/`. El skill del plugin expone `/schema-memory`.
+- **Google Antigravity (CLI)**: `sm setup --target antigravity-cli` genera el bundle y lo importa con `agy plugin install` (o imprime el comando exacto). Verificá con `agy plugin list` y `/skills`.
 - **Claude Code**: Conexión directa mediante CLI:
   ```bash
   claude mcp add schema-memory -- npx -y schema-memory mcp
@@ -124,7 +140,7 @@ flowchart LR
     }
   }
   ```
-- **Estándar Abierto Agent Skills**: Soporte nativo para la especificación universal en `~/.agents/skills/schema-memory/SKILL.md`.
+- **Estándar Abierto Agent Skills**: `sm setup --target agents` publica el skill universal en `~/.agents/skills/schema-memory/SKILL.md`.
 
 ---
 
@@ -133,7 +149,7 @@ flowchart LR
 Para profundizar en el diseño interno, la especificación técnica o contribuir al código:
 
 - 🏗️ **[Arquitectura de Sistemas y Estructura Interna](https://github.com/RaixsG/schema-memory/blob/main/docs/architecture.md)**: Diseño por capas, monorepo (`packages/core`, `server`, `mcp`, `cli`, `apps/web`), Zero Docker y seguridad local anti DNS-rebinding.
-- 🔌 **[Protocolo MCP e Integración con Agentes IA](https://github.com/RaixsG/schema-memory/blob/main/docs/mcp.md)**: Referencia detallada de las 12 herramientas MCP, ciclo de debate guiado y directivas de aislamiento estricto.
+- 🔌 **[Protocolo MCP e Integración con Agentes IA](https://github.com/RaixsG/schema-memory/blob/main/docs/mcp.md)**: Referencia de las 12 herramientas MCP, los 3 prompts guiados, comandos slash por agente, setup selectivo y directivas de aislamiento estricto.
 - 📁 **[Especificación del Repositorio Cliente (`.schema-memory/`)](https://github.com/RaixsG/schema-memory/blob/main/docs/specification.md)**: Formato de `schema.dbml`, ADRs inmutables en Markdown, metadatos YAML y detección de drift.
 - 🛠️ **[Guía de Contribución y Desarrollo Local](https://github.com/RaixsG/schema-memory/blob/main/CONTRIBUTING.md)**: Setup con `pnpm`, desarrollo con hot-reload (`pnpm dev`), suite de tests con Vitest y compilación de binarios standalone.
 

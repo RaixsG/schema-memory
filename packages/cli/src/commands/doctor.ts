@@ -2,6 +2,7 @@ import { resolve, dirname } from 'node:path';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { existsSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import {
   readIfExists,
   listProjects,
@@ -11,6 +12,7 @@ import {
 } from '@schema-memory/core';
 import { getPlatform, type PlatformAdapter } from '../platform/index.js';
 import { readSetupState } from '../setup-state.js';
+import type { SetupTarget } from './setup-config.js';
 
 export interface DoctorCheckResult {
   name: string;
@@ -65,6 +67,12 @@ export async function runDoctorChecks(options?: {
     });
   }
 
+  const selectedTargets = setupState.targets;
+  const legacyChecks = !selectedTargets || selectedTargets.length === 0;
+  const setupProfile = setupState.profile || 'recommended';
+  const includesTarget = (target: SetupTarget): boolean =>
+    legacyChecks || (selectedTargets as SetupTarget[]).includes(target);
+
   // 4. OpenCode MCP (~/.config/opencode/opencode.json) — native V2 shape, V1 fallback
   const openCodeJsonPath = resolve(home, '.config', 'opencode', 'opencode.json');
   const openCodeRaw = await readIfExists(openCodeJsonPath);
@@ -103,54 +111,179 @@ export async function runDoctorChecks(options?: {
       openCodeDetail = `Invalid JSON in ${openCodeJsonPath}`;
     }
   }
-  results.push({
-    name: 'OpenCode MCP (opencode.json)',
-    ok: openCodeOk,
-    detail: openCodeDetail,
-  });
+  if (includesTarget('opencode')) {
+    results.push({
+      name: 'OpenCode MCP (opencode.json)',
+      ok: openCodeOk,
+      detail: openCodeDetail,
+    });
 
-  // 4. Antigravity Direct Global MCP (~/.gemini/config/mcp_config.json)
-  const agyMcpPath = resolve(home, '.gemini', 'config', 'mcp_config.json');
-  const agyMcpRaw = await readIfExists(agyMcpPath);
-  let agyOk = false;
-  let agyDetail = 'Not configured — run "sm setup" (or "npx schema-memory setup" / "bunx schema-memory setup")';
-  if (agyMcpRaw) {
-    try {
-      const parsed = JSON.parse(agyMcpRaw);
-      const entry = parsed?.mcpServers?.['schema-memory-mcp'];
-      if (entry && Array.isArray(entry.args)) {
-        const bin = entry.command;
-        if (bin === 'npx' || bin === 'bunx' || bin === 'pnpm') {
-          agyOk = true;
-          agyDetail = `${agyMcpPath} -> ${bin} ${entry.args.join(' ')}`;
-        } else {
-          const cmdPath = entry.args[0];
-          if (cmdPath && existsSync(cmdPath)) {
-            agyOk = true;
-            agyDetail = `${agyMcpPath} -> ${cmdPath}`;
-          } else {
-            agyDetail = `Entry exists in ${agyMcpPath}, but target "${cmdPath}" does not exist`;
-          }
-        }
-      }
-    } catch {
-      agyDetail = `Invalid JSON in ${agyMcpPath}`;
+    if (!legacyChecks && setupProfile !== 'minimal') {
+      const skillPath = resolve(
+        home,
+        '.config',
+        'opencode',
+        'skills',
+        'schema-memory',
+        'SKILL.md'
+      );
+      results.push({
+        name: 'OpenCode Skill',
+        ok: existsSync(skillPath),
+        detail: existsSync(skillPath) ? skillPath : 'Missing — run "sm setup"',
+      });
+    }
+
+    if (!legacyChecks && setupProfile === 'strict') {
+      const agentsPath = resolve(home, '.config', 'opencode', 'AGENTS.md');
+      const raw = await readIfExists(agentsPath);
+      const ok =
+        !!raw &&
+        raw.includes('<!-- schema-memory:start -->') &&
+        raw.includes('<!-- schema-memory:end -->');
+      results.push({
+        name: 'OpenCode Rules (AGENTS.md)',
+        ok,
+        detail: ok ? agentsPath : 'Missing schema-memory block — run "sm setup"',
+      });
     }
   }
-  results.push({
-    name: 'Antigravity Global MCP (mcp_config.json)',
-    ok: agyOk,
-    detail: agyDetail,
-  });
 
-  // 5. Standard Agent Skill (~/.agents/skills/schema-memory/SKILL.md)
-  const stdSkillPath = resolve(home, '.agents', 'skills', 'schema-memory', 'SKILL.md');
-  const stdSkillExists = existsSync(stdSkillPath);
-  results.push({
-    name: 'Universal Skill (~/.agents/skills)',
-    ok: stdSkillExists,
-    detail: stdSkillExists ? stdSkillPath : 'Missing — run "sm setup"',
-  });
+  const antigravityNeedsGlobalMcp =
+    legacyChecks ||
+    ((includesTarget('antigravity') || includesTarget('antigravity-cli')) &&
+      setupProfile === 'minimal');
+
+  if (antigravityNeedsGlobalMcp) {
+    const agyMcpPath = resolve(home, '.gemini', 'config', 'mcp_config.json');
+    const agyMcpRaw = await readIfExists(agyMcpPath);
+    let agyOk = false;
+    let agyDetail = 'Not configured — run "sm setup" (or "npx schema-memory setup" / "bunx schema-memory setup")';
+    if (agyMcpRaw) {
+      try {
+        const parsed = JSON.parse(agyMcpRaw);
+        const entry = parsed?.mcpServers?.['schema-memory-mcp'];
+        if (entry && Array.isArray(entry.args)) {
+          const bin = entry.command;
+          if (bin === 'npx' || bin === 'bunx' || bin === 'pnpm') {
+            agyOk = true;
+            agyDetail = `${agyMcpPath} -> ${bin} ${entry.args.join(' ')}`;
+          } else {
+            const cmdPath = entry.args[0];
+            if (cmdPath && existsSync(cmdPath)) {
+              agyOk = true;
+              agyDetail = `${agyMcpPath} -> ${cmdPath}`;
+            } else {
+              agyDetail = `Entry exists in ${agyMcpPath}, but target "${cmdPath}" does not exist`;
+            }
+          }
+        }
+      } catch {
+        agyDetail = `Invalid JSON in ${agyMcpPath}`;
+      }
+    }
+    results.push({
+      name: 'Antigravity Global MCP (mcp_config.json)',
+      ok: agyOk,
+      detail: agyDetail,
+    });
+  }
+
+  if (
+    !legacyChecks &&
+    includesTarget('antigravity') &&
+    setupProfile !== 'minimal'
+  ) {
+    const pluginDir = resolve(
+      home,
+      '.gemini',
+      'config',
+      'plugins',
+      'schema-memory'
+    );
+    const manifestPath = resolve(pluginDir, 'plugin.json');
+    const skillPath = resolve(pluginDir, 'skills', 'schema-memory', 'SKILL.md');
+    const ok = existsSync(manifestPath) && existsSync(skillPath);
+    results.push({
+      name: 'Antigravity Plugin Bundle',
+      ok,
+      detail: ok
+        ? pluginDir
+        : `Missing plugin files in ${pluginDir} — run "sm setup"`,
+    });
+  }
+
+  if (
+    !legacyChecks &&
+    includesTarget('antigravity-cli') &&
+    setupProfile !== 'minimal'
+  ) {
+    const pluginDir = resolve(
+      home,
+      '.schema-memory',
+      'plugins',
+      'antigravity',
+      'schema-memory'
+    );
+    const manifestPath = resolve(pluginDir, 'plugin.json');
+    const skillPath = resolve(pluginDir, 'skills', 'schema-memory', 'SKILL.md');
+    const bundleOk = existsSync(manifestPath) && existsSync(skillPath);
+    results.push({
+      name: 'Antigravity CLI Plugin Bundle',
+      ok: bundleOk,
+      detail: bundleOk
+        ? pluginDir
+        : `Missing plugin files in ${pluginDir} — run "sm setup"`,
+    });
+
+    const agy = platform.findCommandOnPath('agy');
+    let imported = false;
+    let detail = 'Antigravity CLI (agy) not found — install it or import the plugin manually';
+    if (agy) {
+      const res = spawnSync('agy', ['plugin', 'list', '--json'], {
+        encoding: 'utf-8',
+        timeout: 5000,
+      });
+      if (res.error || res.status !== 0) {
+        detail = `Could not run "agy plugin list --json"${
+          res.error ? `: ${res.error.message}` : ''
+        }`;
+      } else {
+        try {
+          const list = JSON.parse(String(res.stdout || ''));
+          imported =
+            Array.isArray(list) &&
+            list.some((item: any) => item?.name === 'schema-memory');
+          detail = imported
+            ? 'schema-memory imported into Antigravity CLI'
+            : `Not imported — run: agy plugin install "${pluginDir}"`;
+        } catch {
+          detail = 'Invalid JSON from "agy plugin list --json"';
+        }
+      }
+    }
+    results.push({
+      name: 'Antigravity CLI Plugin',
+      ok: imported,
+      detail,
+    });
+  }
+
+  if (includesTarget('agents')) {
+    const stdSkillPath = resolve(
+      home,
+      '.agents',
+      'skills',
+      'schema-memory',
+      'SKILL.md'
+    );
+    const stdSkillExists = existsSync(stdSkillPath);
+    results.push({
+      name: 'Universal Skill (~/.agents/skills)',
+      ok: stdSkillExists,
+      detail: stdSkillExists ? stdSkillPath : 'Missing — run "sm setup"',
+    });
+  }
 
   // 6. Current Directory / Registered Projects
   const localConfig = await readConfig(cwd);
