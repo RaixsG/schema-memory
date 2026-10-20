@@ -1,7 +1,11 @@
 import { create } from 'zustand';
 import { SchemaModel, Table, Column, Ref, PendingDetails, AdrItem } from './types';
 import { api } from './api';
-import { removeRefsForColumn, renameColumnInRefs } from './lib/relationships';
+import {
+  adjustEdgeIndexAfterRemoval,
+  removeRefsForColumn,
+  renameColumnInRefs,
+} from './lib/relationships';
 
 interface SchemaStore {
   projectId: string | null;
@@ -427,7 +431,10 @@ export const useSchemaStore = create<SchemaStore>((set, get) => ({
     };
     set({
       model: updatedModel,
-      selectedEdgeIndex: selectedEdgeIndex === index ? null : selectedEdgeIndex,
+      selectedEdgeIndex: adjustEdgeIndexAfterRemoval(
+        selectedEdgeIndex,
+        index
+      ),
     });
 
     const { details, fingerprint } = await api.savePending(projectId, { model: updatedModel });

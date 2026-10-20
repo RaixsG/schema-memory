@@ -1,12 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import type { Ref } from '../src/types';
 import {
+  adjustEdgeIndexAfterRemoval,
   formatRelationshipLabel,
   getRelationshipDisplay,
   isDuplicateRef,
   parseHandleId,
   removeRefsForColumn,
   renameColumnInRefs,
+  sortIndicesDescending,
 } from '../src/lib/relationships';
 
 function makeRef(overrides: Partial<Ref> = {}): Ref {
@@ -90,6 +92,18 @@ describe('relationship integrity helpers', () => {
     expect(result.removed).toBe(1);
     expect(result.refs).toHaveLength(1);
     expect(result.refs[0].from.table).toBe('order_items');
+  });
+
+  it('adjusts the selected edge index after removing another edge', () => {
+    expect(adjustEdgeIndexAfterRemoval(2, 0)).toBe(1);
+    expect(adjustEdgeIndexAfterRemoval(0, 2)).toBe(0);
+    expect(adjustEdgeIndexAfterRemoval(2, 2)).toBeNull();
+    expect(adjustEdgeIndexAfterRemoval(null, 1)).toBeNull();
+  });
+
+  it('sorts removal indices descending so deletions do not shift each other', () => {
+    expect(sortIndicesDescending([0, 3, 1])).toEqual([3, 1, 0]);
+    expect(sortIndicesDescending([])).toEqual([]);
   });
 
   it('detects duplicate relationships regardless of column order', () => {

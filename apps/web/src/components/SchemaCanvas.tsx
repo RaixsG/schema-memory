@@ -24,6 +24,7 @@ import {
   getRelationshipDisplay,
   isDuplicateRef,
   parseHandleId,
+  sortIndicesDescending,
 } from '../lib/relationships';
 import { computeAutoLayout, type LayoutDirection } from '../lib/layout';
 import { preserveNodeMeasurements } from '../lib/nodes';
@@ -66,7 +67,7 @@ function CanvasControls({
 
   const runAutoLayout = useCallback(
     async (direction: LayoutDirection = 'LR') => {
-      if (!model || model.tables.length === 0) return;
+      if (isLocked || !model || model.tables.length === 0) return;
 
       try {
         const nextLayout = await computeAutoLayout(
@@ -82,7 +83,7 @@ function CanvasControls({
         console.error('Could not compute the automatic layout', error);
       }
     },
-    [model, applyLayout, fitView]
+    [isLocked, model, applyLayout, fitView]
   );
 
   useEffect(() => {
@@ -100,7 +101,12 @@ function CanvasControls({
         onClick={(event) =>
           void runAutoLayout(event.shiftKey ? 'TB' : 'LR')
         }
-        title="Auto layout (Shift: vertical)"
+        disabled={isLocked}
+        title={
+          isLocked
+            ? 'Auto layout deshabilitado en modo solo lectura'
+            : 'Auto layout (Shift: vertical)'
+        }
         aria-label="Auto layout"
       >
         <LayoutGrid size={14} />
@@ -195,6 +201,13 @@ export function SchemaCanvas() {
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [setSelectedTable, setSelectedEdgeIndex]);
+
+  // A model update can shift ref indices or remove the hovered table. Clear the
+  // local hover so it cannot highlight a different relationship by accident.
+  useEffect(() => {
+    setHoveredTable(null);
+    setHoveredEdgeIndex(null);
+  }, [model]);
 
 const EMPTY_HIGHLIGHTS: Array<{ name: string; role: 'source' | 'target' }> = [];
 
@@ -352,6 +365,7 @@ const EMPTY_HIGHLIGHTS: Array<{ name: string; role: 'source' | 'target' }> = [];
         type: 'table',
         position: pos,
         selected: isSelected,
+        deletable: false,
         data: {
           name: table.name,
           columns: table.columns,
@@ -434,6 +448,8 @@ const EMPTY_HIGHLIGHTS: Array<{ name: string; role: 'source' | 'target' }> = [];
           isActive: isConnectedToActive,
           isDimmed,
           isManyToMany: ref.relation === 'many-to-many',
+          onDelete: ref.onDelete,
+          onUpdate: ref.onUpdate,
           parallelIndex,
           parallelCount,
         },
@@ -491,10 +507,11 @@ const EMPTY_HIGHLIGHTS: Array<{ name: string; role: 'source' | 'target' }> = [];
       const removals = changes.filter((change) => change.type === 'remove');
       if (removals.length === 0) return;
 
-      const indices = removals
-        .map((change) => Number(change.id.replace('ref-', '')))
-        .filter((index) => Number.isInteger(index) && index >= 0)
-        .sort((a, b) => b - a);
+      const indices = sortIndicesDescending(
+        removals
+          .map((change) => Number(change.id.replace('ref-', '')))
+          .filter((index) => Number.isInteger(index) && index >= 0)
+      );
 
       for (const index of indices) {
         removeRef(index);

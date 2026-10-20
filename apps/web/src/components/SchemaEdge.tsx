@@ -1,4 +1,4 @@
-import { memo, useMemo } from 'react';
+import { memo, useMemo, type CSSProperties } from 'react';
 import {
   BaseEdge,
   EdgeLabelRenderer,
@@ -21,11 +21,24 @@ export interface SchemaEdgeData extends Record<string, unknown> {
   isActive: boolean;
   isDimmed: boolean;
   isManyToMany: boolean;
+  onDelete?: string;
+  onUpdate?: string;
   parallelIndex: number;
   parallelCount: number;
 }
 
 export type SchemaEdgeType = Edge<SchemaEdgeData, 'schema'>;
+
+const cascadeChipStyle: CSSProperties = {
+  fontSize: 9,
+  fontWeight: 700,
+  color: '#fbbf24',
+  backgroundColor: 'rgba(251, 191, 36, 0.12)',
+  border: '1px solid rgba(251, 191, 36, 0.35)',
+  borderRadius: 3,
+  padding: '1px 4px',
+  textTransform: 'uppercase',
+};
 
 interface FloatingEdgeParams {
   sx: number;
@@ -346,6 +359,12 @@ export const SchemaEdge = memo(function SchemaEdge({
             >
               {data?.relationLabel}
             </span>
+            {data?.onDelete && (
+              <span style={cascadeChipStyle}>DEL {data.onDelete}</span>
+            )}
+            {data?.onUpdate && (
+              <span style={cascadeChipStyle}>UPD {data.onUpdate}</span>
+            )}
           </div>
         )}
       </EdgeLabelRenderer>

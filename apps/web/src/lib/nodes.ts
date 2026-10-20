@@ -7,6 +7,9 @@ import type { Node } from '@xyflow/react';
  * nodes until the ResizeObserver measures them again, which looks like a blink.
  *
  * This helper carries the previous measurements over to the freshly built nodes.
+ * It also keeps the live position while a node is being dragged: during a drag
+ * the store layout still holds the last saved position, so a rebuild caused by
+ * an SSE sync or a hover change would otherwise snap the node back.
  */
 export function preserveNodeMeasurements(
   nextNodes: Node[],
@@ -20,6 +23,7 @@ export function preserveNodeMeasurements(
     const current = currentById.get(node.id);
     if (!current) return node;
 
+    const isDragging = current.dragging === true;
     const hasDimensions =
       current.measured !== undefined ||
       current.width !== undefined ||
@@ -27,10 +31,13 @@ export function preserveNodeMeasurements(
       current.initialWidth !== undefined ||
       current.initialHeight !== undefined;
 
-    if (!hasDimensions) return node;
+    if (!isDragging && !hasDimensions) return node;
 
     return {
       ...node,
+      ...(isDragging
+        ? { position: current.position, dragging: true }
+        : {}),
       ...(current.measured !== undefined
         ? { measured: current.measured }
         : {}),

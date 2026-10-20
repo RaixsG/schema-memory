@@ -40,6 +40,23 @@ describe('preserveNodeMeasurements', () => {
     expect(preserveNodeMeasurements(next, [])).toBe(next);
   });
 
+  it('keeps the live position while a node is being dragged', () => {
+    const current = [
+      makeNode('users', {
+        position: { x: 480, y: 260 },
+        dragging: true,
+        measured: { width: 240, height: 120 },
+      }),
+    ];
+    const next = [makeNode('users', { position: { x: 10, y: 10 } })];
+
+    const result = preserveNodeMeasurements(next, current);
+
+    expect(result[0].position).toEqual({ x: 480, y: 260 });
+    expect(result[0].dragging).toBe(true);
+    expect(result[0].measured).toEqual({ width: 240, height: 120 });
+  });
+
   it('preserves explicit and initial dimensions', () => {
     const current = [
       makeNode('users', {

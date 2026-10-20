@@ -170,6 +170,20 @@ export function isDuplicateRef(refs: Ref[], candidate: Ref): boolean {
   );
 }
 
+export function sortIndicesDescending(indices: number[]): number[] {
+  return [...indices].sort((a, b) => b - a);
+}
+
+export function adjustEdgeIndexAfterRemoval(
+  selectedIndex: number | null,
+  removedIndex: number
+): number | null {
+  if (selectedIndex === null) return null;
+  if (selectedIndex === removedIndex) return null;
+  if (selectedIndex > removedIndex) return selectedIndex - 1;
+  return selectedIndex;
+}
+
 export function relationLabelForValue(relation: Ref['relation']): string {
   return getRelationshipDisplay({ relation } as Ref).relationLabel;
 }
