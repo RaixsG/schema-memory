@@ -1,4 +1,4 @@
-import { resolve, normalize, sep } from 'node:path';
+import { win32, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { existsSync } from 'node:fs';
 import { readFile, rm, mkdir } from 'node:fs/promises';
@@ -51,8 +51,10 @@ export class WindowsPlatformAdapter implements PlatformAdapter {
   }
 
   normalizeDirForCompare(dir: string): string {
-    let normalized = normalize(dir).replace(/\//g, '\\');
-    if (normalized.endsWith('\\') && normalized.length > 3) {
+    // Semantic comparisons always use Windows rules, even when this adapter is
+    // exercised from a POSIX test runner.
+    let normalized = win32.normalize(dir);
+    if (normalized.endsWith(win32.sep) && normalized.length > 3) {
       normalized = normalized.slice(0, -1);
     }
     return normalized.toLowerCase();
@@ -62,7 +64,7 @@ export class WindowsPlatformAdapter implements PlatformAdapter {
     const target = this.normalizeDirForCompare(targetPath);
     let base = this.normalizeDirForCompare(dir);
     if (target === base) return true;
-    if (!base.endsWith('\\')) base += '\\';
+    if (!base.endsWith(win32.sep)) base += win32.sep;
     return target.startsWith(base);
   }
 

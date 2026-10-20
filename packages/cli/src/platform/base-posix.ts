@@ -1,4 +1,4 @@
-import { resolve, normalize, sep } from 'node:path';
+import { posix, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { existsSync } from 'node:fs';
 import { chmod, rm, symlink, mkdir } from 'node:fs/promises';
@@ -45,8 +45,10 @@ export abstract class BasePosixPlatformAdapter implements PlatformAdapter {
   }
 
   normalizeDirForCompare(dir: string): string {
-    let normalized = normalize(dir);
-    if (normalized.endsWith(sep) && normalized.length > 1) {
+    // Semantic comparisons always use POSIX rules, even when this adapter is
+    // exercised from a Windows test runner.
+    let normalized = posix.normalize(dir);
+    if (normalized.endsWith(posix.sep) && normalized.length > 1) {
       normalized = normalized.slice(0, -1);
     }
     return normalized;
@@ -56,7 +58,7 @@ export abstract class BasePosixPlatformAdapter implements PlatformAdapter {
     const target = this.normalizeDirForCompare(targetPath);
     let base = this.normalizeDirForCompare(dir);
     if (target === base) return true;
-    if (!base.endsWith(sep)) base += sep;
+    if (!base.endsWith(posix.sep)) base += posix.sep;
     return target.startsWith(base);
   }
 
