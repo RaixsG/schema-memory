@@ -18,6 +18,7 @@ Al desarrollar sistemas a gran velocidad con asistentes de Inteligencia Artifici
 `schema-memory` soluciona esto uniendo el modelado visual local con la memoria persistente del agente:
 
 - 🎨 **Lienzo Visual Interactivo**: Diseña y edita tablas en un canvas local basado en **DBML canónico y neutral** (desacoplado de ORMs o SQL específicos).
+- 🔗 **Relaciones legibles y auto-layout**: Aristas flotantes que se adaptan a la posición de las tablas, cardinalidad visible (`1`/`N`/`M`), resaltado de relaciones al hacer hover y reacomodo automático con Dagre (botón en el canvas; `Shift` para vertical).
 - 🤖 **Debate Guiado con IA**: El agente no aplica cambios de base de datos a ciegas; antes de tocar código, inicia un debate arquitectónico obligatorio contigo en el chat.
 - 📜 **ADRs Inmutables en Git**: Cada confirmación genera un Architecture Decision Record versionado en `.schema-memory/adr/` con las razones y alternativas técnicas.
 - 🧠 **Memoria Persistente para el Agente**: Genera automáticamente un payload `engramSummary` en cada confirmación para que el asistente de IA guarde la decisión en su sistema de memoria a largo plazo (Engram, Notion, etc.).
